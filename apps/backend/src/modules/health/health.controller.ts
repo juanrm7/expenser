@@ -4,7 +4,7 @@ import { HealthService } from './health.service.js'
 const service = new HealthService()
 
 export async function healthController(app: FastifyInstance) {
-  app.get('/', async () => {
+  app.get('/health', async () => {
     return service.hello()
   })
 }
