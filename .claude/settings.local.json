@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(git config:*)",
+      "Bash(pnpm --version)",
+      "Bash(mkdir -p apps/webapp)",
+      "Bash(cp -r src public astro.config.mjs tsconfig.json package.json apps/webapp/)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm approve-builds:*)",
+      "Bash(printf '\\\\x03')"
+    ]
+  }
+}
