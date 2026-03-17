@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { CategoriesService } from './categories.service.js'
 import type { CreateCategoryBody, UpdateCategoryBody } from './categories.types.js'
+import { isNotFound } from '../../lib/prisma-errors.js'
 
 const service = new CategoriesService()
 
@@ -25,8 +26,10 @@ export async function categoriesController(app: FastifyInstance) {
     async (req, reply) => {
       try {
         return await service.update(Number(req.params.id), req.body)
-      } catch {
-        return reply.status(404).send({ message: 'Category not found' })
+      } catch (err) {
+        if (isNotFound(err)) return reply.status(404).send({ message: 'Category not found' })
+        req.log.error(err)
+        return reply.status(500).send({ message: 'Internal server error' })
       }
     }
   )
@@ -35,8 +38,10 @@ export async function categoriesController(app: FastifyInstance) {
     try {
       await service.delete(Number(req.params.id))
       return reply.status(204).send()
-    } catch {
-      return reply.status(404).send({ message: 'Category not found' })
+    } catch (err) {
+      if (isNotFound(err)) return reply.status(404).send({ message: 'Category not found' })
+      req.log.error(err)
+      return reply.status(500).send({ message: 'Internal server error' })
     }
   })
 }
