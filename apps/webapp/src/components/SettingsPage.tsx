@@ -2,11 +2,9 @@ import { useState, useEffect } from 'react'
 import type { AppConfig } from '../lib/data'
 import { loadConfig, saveConfig } from '../lib/data'
 import Header from './Header'
-import ExpenseTracker from './ExpenseTracker'
 import SettingsScreen from './SettingsScreen'
 
-export default function App() {
-  const [view, setView] = useState<'home' | 'settings'>('home')
+export default function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null)
 
   useEffect(() => {
@@ -22,11 +20,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header view={view} onToggle={() => setView(v => v === 'home' ? 'settings' : 'home')} />
-      {view === 'home'
-        ? <ExpenseTracker config={config} />
-        : <SettingsScreen config={config} onChange={handleConfigChange} />
-      }
+      <Header page="settings" />
+      <SettingsScreen config={config} onChange={handleConfigChange} />
     </div>
   )
 }
