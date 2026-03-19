@@ -8,7 +8,7 @@ interface Props {
   onChange: (config: AppConfig) => void
 }
 
-export default function SettingsScreen({ config, onChange }: Props) {
+export function SettingsScreen({ config, onChange }: Props) {
   const [allowanceInput, setAllowanceInput] = useState(String(config.baseAllowance))
   const [allowanceSaved, setAllowanceSaved] = useState(false)
   const [categoryInput, setCategoryInput] = useState('')

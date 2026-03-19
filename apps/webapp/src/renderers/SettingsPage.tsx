@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import type { AppConfig } from '../lib/data'
 import { loadConfig, saveConfig } from '../lib/data'
-import Header from './Header'
-import SettingsScreen from './SettingsScreen'
+import { Header } from '../components/Header'
+import { SettingsScreen } from '../templates/SettingsScreen'
 
-export default function SettingsPage() {
+export function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null)
 
   useEffect(() => {

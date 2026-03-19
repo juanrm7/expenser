@@ -4,7 +4,7 @@ interface Props {
   page: 'home' | 'settings'
 }
 
-export default function Header({ page }: Props) {
+export function Header({ page }: Props) {
   return (
     <header className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
       <h1 className="text-lg font-bold text-gray-900 tracking-tight">Expenser</h1>

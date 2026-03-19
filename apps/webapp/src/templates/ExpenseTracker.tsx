@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react'
 import type { AppConfig, WeekData } from '../lib/data'
-import { loadWeekData, saveWeekData, formatARS } from '../lib/data'
+import { loadWeekData, formatARS } from '../lib/data'
+import type { Expense } from '../services/expenses'
+import type { Category } from '../services/categories'
 
 interface Props {
   config: AppConfig
+  expenses: Expense[]
+  categories: Category[]
 }
 
-export default function ExpenseTracker({ config }: Props) {
+export function ExpenseTracker({ config, expenses, categories }: Props) {
   const [weekData, setWeekData] = useState<WeekData | null>(null)
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
@@ -18,25 +22,25 @@ export default function ExpenseTracker({ config }: Props) {
     setWeekData(data)
   }, [])
 
-  // Keep selected category valid when categories change
   useEffect(() => {
-    if (config.categories.length === 0) {
+    if (categories.length === 0) {
       setCategory('')
       return
     }
-    const valid = config.categories.some(c => c.name === category)
-    if (!valid) setCategory(config.categories[0].name)
-  }, [config.categories])
+    const valid = categories.some(c => c.name === category)
+    if (!valid) setCategory(categories[0].name)
+  }, [categories])
 
   if (!weekData) return null
 
-  const spent = weekData.expenses.reduce((sum, e) => sum + e.amount, 0)
+  const weekStart = new Date(weekData.weekStart + 'T00:00:00')
+  const weekExpenses = expenses.filter(e => new Date(e.createdAt) >= weekStart)
+
+  const spent = weekExpenses.reduce((sum, e) => sum + e.amount, 0)
   const budget = config.baseAllowance + weekData.carryOver
   const balance = budget - spent
   const isOver = balance < 0
   const pctUsed = Math.min((spent / budget) * 100, 100)
-
-  const categoryMap = Object.fromEntries(config.categories.map(c => [c.name, c.color]))
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -50,29 +54,8 @@ export default function ExpenseTracker({ config }: Props) {
       return
     }
     setError('')
-    const updated: WeekData = {
-      ...weekData!,
-      expenses: [
-        {
-          id: crypto.randomUUID(),
-          amount: parsed,
-          category,
-          description: description.trim(),
-          date: new Date().toISOString(),
-        },
-        ...weekData!.expenses,
-      ],
-    }
-    setWeekData(updated)
-    saveWeekData(updated)
     setAmount('')
     setDescription('')
-  }
-
-  function handleDelete(id: string) {
-    const updated = { ...weekData!, expenses: weekData!.expenses.filter(e => e.id !== id) }
-    setWeekData(updated)
-    saveWeekData(updated)
   }
 
   const weekLabel = new Date(weekData.weekStart + 'T12:00:00').toLocaleDateString('en-US', {
@@ -122,12 +105,12 @@ export default function ExpenseTracker({ config }: Props) {
           <select
             value={category}
             onChange={e => setCategory(e.target.value)}
-            disabled={config.categories.length === 0}
+            disabled={categories.length === 0}
             className="border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
           >
-            {config.categories.length === 0 && <option value="">No categories</option>}
-            {config.categories.map(c => (
-              <option key={c.name} value={c.name}>{c.name}</option>
+            {categories.length === 0 && <option value="">No categories</option>}
+            {categories.map(c => (
+              <option key={c.id} value={c.name}>{c.name}</option>
             ))}
           </select>
         </div>
@@ -144,7 +127,7 @@ export default function ExpenseTracker({ config }: Props) {
 
         <button
           type="submit"
-          disabled={config.categories.length === 0}
+          disabled={categories.length === 0}
           className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-xl py-3 text-sm transition-colors"
         >
           Add Expense
@@ -152,31 +135,25 @@ export default function ExpenseTracker({ config }: Props) {
       </form>
 
       {/* Expense list */}
-      {weekData.expenses.length > 0 ? (
+      {weekExpenses.length > 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-50">
           <h2 className="font-semibold text-gray-700 px-5 py-4">This week</h2>
-          {weekData.expenses.map(expense => {
-            const color = categoryMap[expense.category] ?? 'bg-gray-100 text-gray-600'
+          {weekExpenses.map(expense => {
+            const match = categories.find(c => c.name === expense.category)
             return (
               <div key={expense.id} className="flex items-center justify-between px-5 py-3 gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className={`text-xs font-medium px-2 py-1 rounded-lg shrink-0 ${color}`}>
+                  <span
+                    className="text-xs font-medium px-2 py-1 rounded-lg shrink-0 text-white"
+                    style={match ? { backgroundColor: match.color } : { backgroundColor: '#e5e7eb', color: '#4b5563' }}
+                  >
                     {expense.category}
                   </span>
                   <span className="text-sm text-gray-500 truncate">
                     {expense.description || '—'}
                   </span>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-sm font-semibold text-gray-800">{formatARS(expense.amount)}</span>
-                  <button
-                    onClick={() => handleDelete(expense.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors text-xl leading-none"
-                    aria-label="Delete"
-                  >
-                    ×
-                  </button>
-                </div>
+                <span className="text-sm font-semibold text-gray-800 shrink-0">{formatARS(expense.amount)}</span>
               </div>
             )
           })}
