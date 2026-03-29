@@ -1,26 +1,18 @@
 import { useState, useEffect } from 'react'
-import type { AppConfig, WeekData } from '../lib/data'
-import { loadWeekData, formatARS } from '../lib/data'
-import type { Expense } from '../services/expenses'
+import { formatARS } from '../lib/data'
+import type { ExpenseSummary } from '../services/expenses'
 import type { Category } from '../services/categories'
 
 interface Props {
-  config: AppConfig
-  expenses: Expense[]
+  summary: ExpenseSummary
   categories: Category[]
 }
 
-export function ExpenseTracker({ config, expenses, categories }: Props) {
-  const [weekData, setWeekData] = useState<WeekData | null>(null)
+export function ExpenseTracker({ summary, categories }: Props) {
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    const data = loadWeekData(config.baseAllowance)
-    setWeekData(data)
-  }, [])
 
   useEffect(() => {
     if (categories.length === 0) {
@@ -31,18 +23,11 @@ export function ExpenseTracker({ config, expenses, categories }: Props) {
     if (!valid) setCategory(categories[0].name)
   }, [categories])
 
-  if (!weekData) return null
+  const { allowance, spent, available, expenses, weekStart } = summary
+  const isOver = available < 0
+  const pctUsed = Math.min((spent / allowance) * 100, 100)
 
-  const weekStart = new Date(weekData.weekStart + 'T00:00:00')
-  const weekExpenses = expenses.filter(e => new Date(e.createdAt) >= weekStart)
-
-  const spent = weekExpenses.reduce((sum, e) => sum + e.amount, 0)
-  const budget = config.baseAllowance + weekData.carryOver
-  const balance = budget - spent
-  const isOver = balance < 0
-  const pctUsed = Math.min((spent / budget) * 100, 100)
-
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
     const parsed = parseFloat(amount.replace(',', '.'))
     if (!parsed || parsed <= 0) {
@@ -58,7 +43,7 @@ export function ExpenseTracker({ config, expenses, categories }: Props) {
     setDescription('')
   }
 
-  const weekLabel = new Date(weekData.weekStart + 'T12:00:00').toLocaleDateString('en-US', {
+  const weekLabel = new Date(weekStart + 'T12:00:00').toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
   })
@@ -69,16 +54,11 @@ export function ExpenseTracker({ config, expenses, categories }: Props) {
       {/* Balance card */}
       <div className={`rounded-2xl p-5 text-white shadow-md ${isOver ? 'bg-red-500' : 'bg-indigo-600'}`}>
         <p className="text-sm font-medium opacity-80">Remaining — week of {weekLabel}</p>
-        <p className="text-4xl font-bold mt-1 tabular-nums">{formatARS(balance)}</p>
-        {weekData.carryOver !== 0 && (
-          <p className="text-xs opacity-70 mt-1">
-            {weekData.carryOver > 0 ? '+' : ''}{formatARS(weekData.carryOver)} carried over
-          </p>
-        )}
+        <p className="text-4xl font-bold mt-1 tabular-nums">{formatARS(available)}</p>
         <div className="mt-4">
           <div className="flex justify-between text-xs opacity-75 mb-1">
             <span>{formatARS(spent)} spent</span>
-            <span>{formatARS(budget)} budget</span>
+            <span>{formatARS(allowance)} budget</span>
           </div>
           <div className="w-full bg-white/30 rounded-full h-2">
             <div
@@ -135,10 +115,10 @@ export function ExpenseTracker({ config, expenses, categories }: Props) {
       </form>
 
       {/* Expense list */}
-      {weekExpenses.length > 0 ? (
+      {expenses.length > 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-50">
           <h2 className="font-semibold text-gray-700 px-5 py-4">This week</h2>
-          {weekExpenses.map(expense => {
+          {expenses.map(expense => {
             const match = categories.find(c => c.name === expense.category)
             return (
               <div key={expense.id} className="flex items-center justify-between px-5 py-3 gap-3">

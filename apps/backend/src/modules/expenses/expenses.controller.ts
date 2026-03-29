@@ -12,6 +12,10 @@ export async function expensesController(app: FastifyInstance) {
     return service.getAll()
   })
 
+  app.get('/expenses/summary', async () => {
+    return service.getWeeklySummary()
+  })
+
   app.get<{ Params: { id: string } }>('/expenses/:id', async (req, reply) => {
     const expense = await service.getById(Number(req.params.id))
 

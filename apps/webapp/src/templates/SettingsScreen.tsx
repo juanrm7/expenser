@@ -1,20 +1,25 @@
 import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { AppConfig } from '../lib/data'
-import { formatARS, randomColor } from '../lib/data'
+import { formatARS, randomHexColor } from '../lib/data'
+import { createCategory, deleteCategory, type Category } from '../services/categories'
 
 interface Props {
   config: AppConfig
   onChange: (config: AppConfig) => void
+  categories: Category[]
+  onCategoryAdded: (category: Category) => void
+  onCategoryRemoved: (id: number) => void
 }
 
-export function SettingsScreen({ config, onChange }: Props) {
+export function SettingsScreen({ config, onChange, categories, onCategoryAdded, onCategoryRemoved }: Props) {
   const [allowanceInput, setAllowanceInput] = useState(String(config.baseAllowance))
   const [allowanceSaved, setAllowanceSaved] = useState(false)
   const [categoryInput, setCategoryInput] = useState('')
   const [categoryError, setCategoryError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  function saveAllowance(e: React.FormEvent<HTMLFormElement>) {
+  function saveAllowance(e: React.SyntheticEvent) {
     e.preventDefault()
     const val = parseFloat(allowanceInput.replace(',', '.'))
     if (!val || val <= 0) return
@@ -23,22 +28,36 @@ export function SettingsScreen({ config, onChange }: Props) {
     setTimeout(() => setAllowanceSaved(false), 2000)
   }
 
-  function addCategory(e: React.FormEvent<HTMLFormElement>) {
+  async function addCategory(e: React.SyntheticEvent) {
     e.preventDefault()
     const name = categoryInput.trim()
     if (!name) return
-    if (config.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+    if (categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
       setCategoryError('Category already exists')
       return
     }
     setCategoryError('')
-    const color = randomColor(config.categories.map(c => c.color))
-    onChange({ ...config, categories: [...config.categories, { name, color }] })
-    setCategoryInput('')
+    setSubmitting(true)
+    try {
+      const color = randomHexColor(categories.map(c => c.color))
+      const created = await createCategory(name, color)
+      onCategoryAdded(created)
+      setCategoryInput('')
+    } catch (err) {
+      console.error('Failed to create category:', err)
+      setCategoryError('Failed to create category')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  function removeCategory(name: string) {
-    onChange({ ...config, categories: config.categories.filter(c => c.name !== name) })
+  async function removeCategory(id: number) {
+    try {
+      await deleteCategory(id)
+      onCategoryRemoved(id)
+    } catch (err) {
+      console.error('Failed to delete category:', err)
+    }
   }
 
   return (
@@ -92,21 +111,25 @@ export function SettingsScreen({ config, onChange }: Props) {
           />
           <button
             type="submit"
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 rounded-xl transition-colors"
+            disabled={submitting}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold px-4 rounded-xl transition-colors"
           >
-            Add
+            {submitting ? 'Adding…' : 'Add'}
           </button>
         </form>
         {categoryError && <p className="text-red-500 text-xs">{categoryError}</p>}
 
         <ul className="space-y-2">
-          {config.categories.map(cat => (
-            <li key={cat.name} className="flex items-center justify-between">
-              <span className={`text-xs font-medium px-3 py-1.5 rounded-lg ${cat.color}`}>
+          {categories.map(cat => (
+            <li key={cat.id} className="flex items-center justify-between">
+              <span
+                className="text-xs font-medium px-3 py-1.5 rounded-lg text-white"
+                style={{ backgroundColor: cat.color }}
+              >
                 {cat.name}
               </span>
               <button
-                onClick={() => removeCategory(cat.name)}
+                onClick={() => removeCategory(cat.id)}
                 className="p-1.5 text-gray-300 hover:text-red-400 transition-colors rounded-lg hover:bg-red-50"
                 aria-label={`Remove ${cat.name}`}
               >
@@ -114,7 +137,7 @@ export function SettingsScreen({ config, onChange }: Props) {
               </button>
             </li>
           ))}
-          {config.categories.length === 0 && (
+          {categories.length === 0 && (
             <p className="text-sm text-gray-400 text-center py-2">No categories yet.</p>
           )}
         </ul>
