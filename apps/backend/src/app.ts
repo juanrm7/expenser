@@ -7,7 +7,7 @@ import { expensesController } from './modules/expenses/expenses.controller.js'
 export function buildApp() {
   const app = Fastify({ logger: true })
 
-  app.register(cors)
+  app.register(cors, { origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'] })
 
   app.register(healthController)
   app.register(categoriesController)

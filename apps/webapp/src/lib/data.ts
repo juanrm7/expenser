@@ -95,3 +95,15 @@ export function randomColor(usedColors: string[]): string {
   const pool = available.length > 0 ? available : COLOR_PALETTE
   return pool[Math.floor(Math.random() * pool.length)]
 }
+
+export const HEX_COLOR_PALETTE = [
+  '#10b981', '#8b5cf6', '#3b82f6', '#f97316',
+  '#ec4899', '#eab308', '#14b8a6', '#f43f5e',
+  '#06b6d4', '#7c3aed',
+]
+
+export function randomHexColor(usedColors: string[]): string {
+  const available = HEX_COLOR_PALETTE.filter(c => !usedColors.includes(c))
+  const pool = available.length > 0 ? available : HEX_COLOR_PALETTE
+  return pool[Math.floor(Math.random() * pool.length)]
+}
