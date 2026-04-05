@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { formatARS } from '../lib/data'
 import type { ExpenseSummary } from '../services/expenses'
+import { createExpense, deleteExpense, getExpenseSummary } from '../services/expenses'
 import type { Category } from '../services/categories'
 
 interface Props {
@@ -8,39 +9,50 @@ interface Props {
   categories: Category[]
 }
 
-export function ExpenseTracker({ summary, categories }: Props) {
+export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
+  const [summary, setSummary] = useState(initialSummary)
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
-  const [category, setCategory] = useState('')
+  const [categoryId, setCategoryId] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (categories.length === 0) {
-      setCategory('')
+      setCategoryId(null)
       return
     }
-    const valid = categories.some(c => c.name === category)
-    if (!valid) setCategory(categories[0].name)
+    const valid = categories.some(c => c.id === categoryId)
+    if (!valid) setCategoryId(categories[0].id)
   }, [categories])
 
   const { allowance, spent, available, expenses, weekStart } = summary
   const isOver = available < 0
   const pctUsed = Math.min((spent / allowance) * 100, 100)
 
-  function handleSubmit(e: React.SyntheticEvent) {
+  async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
     const parsed = parseFloat(amount.replace(',', '.'))
     if (!parsed || parsed <= 0) {
       setError('Enter a valid amount')
       return
     }
-    if (!category) {
+    if (!categoryId) {
       setError('Select a category')
       return
     }
     setError('')
-    setAmount('')
-    setDescription('')
+    setSubmitting(true)
+    try {
+      await createExpense({ amount: parsed, description, categoryId })
+      setAmount('')
+      setDescription('')
+      setSummary(await getExpenseSummary())
+    } catch {
+      setError('Failed to add expense. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const weekLabel = new Date(weekStart + 'T12:00:00').toLocaleDateString('en-US', {
@@ -69,6 +81,23 @@ export function ExpenseTracker({ summary, categories }: Props) {
         </div>
       </div>
 
+      {/* Overspent banner */}
+      {isOver && (
+        <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+          <span className="mt-0.5 text-red-500 shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-5a1 1 0 00-1 1v2a1 1 0 002 0V9a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-red-700">Over budget this week</p>
+            <p className="text-xs text-red-500 mt-0.5">
+              You've exceeded your weekly allowance by {formatARS(Math.abs(available))}.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Add expense form */}
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-3">
         <h2 className="font-semibold text-gray-700">Add expense</h2>
@@ -83,14 +112,14 @@ export function ExpenseTracker({ summary, categories }: Props) {
             className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
           <select
-            value={category}
-            onChange={e => setCategory(e.target.value)}
+            value={categoryId ?? ''}
+            onChange={e => setCategoryId(Number(e.target.value))}
             disabled={categories.length === 0}
             className="border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
           >
             {categories.length === 0 && <option value="">No categories</option>}
             {categories.map(c => (
-              <option key={c.id} value={c.name}>{c.name}</option>
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
@@ -107,10 +136,10 @@ export function ExpenseTracker({ summary, categories }: Props) {
 
         <button
           type="submit"
-          disabled={categories.length === 0}
+          disabled={categories.length === 0 || submitting}
           className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-xl py-3 text-sm transition-colors"
         >
-          Add Expense
+          {submitting ? 'Adding…' : 'Add Expense'}
         </button>
       </form>
 
@@ -133,7 +162,21 @@ export function ExpenseTracker({ summary, categories }: Props) {
                     {expense.description || '—'}
                   </span>
                 </div>
-                <span className="text-sm font-semibold text-gray-800 shrink-0">{formatARS(expense.amount)}</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-sm font-semibold text-gray-800">{formatARS(expense.amount)}</span>
+                  <button
+                    onClick={async () => {
+                      await deleteExpense(expense.id)
+                      setSummary(await getExpenseSummary())
+                    }}
+                    className="text-gray-300 hover:text-red-400 transition-colors"
+                    aria-label="Delete expense"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             )
           })}
