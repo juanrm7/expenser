@@ -10,7 +10,13 @@
     "build": "tsup src/server.ts --out-dir dist --format esm",
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:prod": "prisma migrate deploy",
+    "pm2:start": "pm2 start dist/server.js --name expenser-backend",
+    "pm2:stop": "pm2 stop expenser-backend",
+    "pm2:restart": "pm2 restart expenser-backend",
+    "pm2:logs": "pm2 logs expenser-backend",
+    "deploy": "pnpm build && pnpm db:migrate:prod && pnpm pm2:restart"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
