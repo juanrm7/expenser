@@ -23,6 +23,9 @@ pnpm-debug.log*
 # jetbrains setting folder
 .idea/
 
+# local editor settings
+.claude/settings.local.json
+
 # prisma
 *.db
 *.db-journal
