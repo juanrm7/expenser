@@ -1,4 +1,4 @@
-import { env } from '../config/environment'
+import { apiFetch } from '../lib/apiFetch'
 
 export interface AuthUser {
   id: number
@@ -36,10 +36,9 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function signup(payload: SignupPayload): Promise<AuthUser> {
-  const response = await fetch(`${env.backendUrl}/auth/signup`, {
+  const response = await apiFetch('/auth/signup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(await parseError(response))
@@ -47,10 +46,9 @@ export async function signup(payload: SignupPayload): Promise<AuthUser> {
 }
 
 export async function login(payload: LoginPayload): Promise<AuthUser> {
-  const response = await fetch(`${env.backendUrl}/auth/login`, {
+  const response = await apiFetch('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(await parseError(response))
@@ -58,26 +56,20 @@ export async function login(payload: LoginPayload): Promise<AuthUser> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${env.backendUrl}/auth/logout`, {
-    method: 'POST',
-    credentials: 'include',
-  })
+  await apiFetch('/auth/logout', { method: 'POST' })
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  const response = await fetch(`${env.backendUrl}/auth/me`, {
-    credentials: 'include',
-  })
+  const response = await apiFetch('/auth/me')
   if (response.status === 401) return null
   if (!response.ok) throw new Error(await parseError(response))
   return response.json()
 }
 
 export async function updateProfile(payload: UpdateProfilePayload): Promise<AuthUser> {
-  const response = await fetch(`${env.backendUrl}/auth/me`, {
+  const response = await apiFetch('/auth/me', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(await parseError(response))

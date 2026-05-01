@@ -1,4 +1,4 @@
-import { env } from '../config/environment'
+import { apiFetch } from '../lib/apiFetch'
 
 export interface Expense {
   id: number
@@ -18,20 +18,17 @@ export interface ExpenseSummary {
 }
 
 export async function getExpenses(): Promise<Expense[]> {
-  const response = await fetch(`${env.backendUrl}/expenses`, { credentials: 'include' })
+  const response = await apiFetch('/expenses')
   return response.json()
 }
 
 export async function getExpenseSummary(): Promise<ExpenseSummary> {
-  const response = await fetch(`${env.backendUrl}/expenses/summary`, { credentials: 'include' })
+  const response = await apiFetch('/expenses/summary')
   return response.json()
 }
 
 export async function deleteExpense(id: number): Promise<void> {
-  const response = await fetch(`${env.backendUrl}/expenses/${id}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  })
+  const response = await apiFetch(`/expenses/${id}`, { method: 'DELETE' })
   if (!response.ok) throw new Error('Failed to delete expense')
 }
 
@@ -40,10 +37,9 @@ export async function createExpense(payload: {
   description: string
   categoryId: number
 }): Promise<Expense> {
-  const response = await fetch(`${env.backendUrl}/expenses`, {
+  const response = await apiFetch('/expenses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error('Failed to create expense')

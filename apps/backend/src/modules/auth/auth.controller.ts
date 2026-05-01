@@ -34,8 +34,7 @@ export async function authController(app: FastifyInstance) {
       return reply.status(201).send(result.user)
     } catch (err) {
       if (err instanceof AuthError) return reply.status(err.status).send({ message: err.message })
-      req.log.error(err)
-      return reply.status(500).send({ message: 'Internal server error' })
+      throw err
     }
   })
 
@@ -46,8 +45,7 @@ export async function authController(app: FastifyInstance) {
       return reply.send(result.user)
     } catch (err) {
       if (err instanceof AuthError) return reply.status(err.status).send({ message: err.message })
-      req.log.error(err)
-      return reply.status(500).send({ message: 'Internal server error' })
+      throw err
     }
   })
 
@@ -71,8 +69,7 @@ export async function authController(app: FastifyInstance) {
         return user
       } catch (err) {
         if (err instanceof AuthError) return reply.status(err.status).send({ message: err.message })
-        req.log.error(err)
-        return reply.status(500).send({ message: 'Internal server error' })
+        throw err
       }
     }
   )
