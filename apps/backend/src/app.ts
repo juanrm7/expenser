@@ -1,15 +1,27 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import cookie from '@fastify/cookie'
+import { env } from './lib/env.js'
+import { authPlugin } from './lib/auth-plugin.js'
 import { healthController } from './modules/health/health.controller.js'
+import { authController } from './modules/auth/auth.controller.js'
 import { categoriesController } from './modules/categories/categories.controller.js'
 import { expensesController } from './modules/expenses/expenses.controller.js'
 
 export function buildApp() {
   const app = Fastify({ logger: true })
 
-  app.register(cors, { origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'] })
+  app.register(cors, {
+    origin: env.webappUrl,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
+
+  app.register(cookie)
+  app.register(authPlugin)
 
   app.register(healthController)
+  app.register(authController)
   app.register(categoriesController)
   app.register(expensesController)
 

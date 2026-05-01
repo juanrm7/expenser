@@ -1,45 +1,75 @@
 import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import type { AppConfig } from '../lib/data'
 import { formatARS, randomHexColor } from '../lib/data'
 import { createCategory, deleteCategory, type Category } from '../services/categories'
+import { updateProfile, type AuthUser } from '../services/auth'
 
 interface Props {
-  config: AppConfig
-  onChange: (config: AppConfig) => void
+  user: AuthUser
+  onUserChange: (user: AuthUser) => void
   categories: Category[]
   onCategoryAdded: (category: Category) => void
   onCategoryRemoved: (id: number) => void
 }
 
-export function SettingsScreen({ config, onChange, categories, onCategoryAdded, onCategoryRemoved }: Props) {
-  const [allowanceInput, setAllowanceInput] = useState(String(config.baseAllowance))
-  const [allowanceSaved, setAllowanceSaved] = useState(false)
+export function SettingsScreen({
+  user,
+  onUserChange,
+  categories,
+  onCategoryAdded,
+  onCategoryRemoved,
+}: Props) {
+  const [nameInput, setNameInput] = useState(user.name)
+  const [allowanceInput, setAllowanceInput] = useState(String(user.expendableAmountPerWeek))
+  const [profileSaved, setProfileSaved] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [profileSubmitting, setProfileSubmitting] = useState(false)
+
   const [categoryInput, setCategoryInput] = useState('')
   const [categoryError, setCategoryError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  function saveAllowance(e: React.SyntheticEvent) {
+  async function saveProfile(e: React.SyntheticEvent) {
     e.preventDefault()
-    const val = parseFloat(allowanceInput.replace(',', '.'))
-    if (!val || val <= 0) return
-    onChange({ ...config, baseAllowance: val })
-    setAllowanceSaved(true)
-    setTimeout(() => setAllowanceSaved(false), 2000)
+    setProfileError('')
+
+    const name = nameInput.trim()
+    if (!name) {
+      setProfileError('Name cannot be empty')
+      return
+    }
+
+    const amount = parseFloat(allowanceInput.replace(',', '.'))
+    if (!Number.isFinite(amount) || amount < 0) {
+      setProfileError('Enter a valid weekly amount')
+      return
+    }
+
+    setProfileSubmitting(true)
+    try {
+      const updated = await updateProfile({ name, expendableAmountPerWeek: amount })
+      onUserChange(updated)
+      setProfileSaved(true)
+      setTimeout(() => setProfileSaved(false), 2000)
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Failed to update profile')
+    } finally {
+      setProfileSubmitting(false)
+    }
   }
 
   async function addCategory(e: React.SyntheticEvent) {
     e.preventDefault()
     const name = categoryInput.trim()
     if (!name) return
-    if (categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
       setCategoryError('Category already exists')
       return
     }
     setCategoryError('')
     setSubmitting(true)
     try {
-      const color = randomHexColor(categories.map(c => c.color))
+      const color = randomHexColor(categories.map((c) => c.color))
       const created = await createCategory(name, color)
       onCategoryAdded(created)
       setCategoryInput('')
@@ -62,50 +92,83 @@ export function SettingsScreen({ config, onChange, categories, onCategoryAdded, 
 
   return (
     <div className="max-w-lg mx-auto px-4 py-6 space-y-6">
-
-      {/* Allowance */}
-      <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
+      {/* Profile */}
+      <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
         <div>
-          <h2 className="font-semibold text-gray-800">Weekly allowance</h2>
+          <h2 className="font-semibold text-gray-800">Profile</h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            Carry-over from previous weeks is applied on top of this amount.
+            Update your display name and weekly budget.
           </p>
         </div>
-        <form onSubmit={saveAllowance} className="flex gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            value={allowanceInput}
-            onChange={e => setAllowanceInput(e.target.value)}
-            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            placeholder="Amount in ARS"
-          />
+
+        <form onSubmit={saveProfile} className="space-y-3">
+          <div>
+            <label htmlFor="name" className="block text-xs font-medium text-gray-600 mb-1">
+              Name
+            </label>
+            <input
+              id="name"
+              type="text"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="allowance" className="block text-xs font-medium text-gray-600 mb-1">
+              Weekly expendable amount (ARS)
+            </label>
+            <input
+              id="allowance"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              value={allowanceInput}
+              onChange={(e) => setAllowanceInput(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Current:{' '}
+              <span className="font-medium text-gray-600">
+                {formatARS(user.expendableAmountPerWeek)}
+              </span>{' '}
+              / week
+            </p>
+          </div>
+
+          <div className="text-xs text-gray-400">
+            Email: <span className="text-gray-600">{user.email}</span>
+          </div>
+
+          {profileError && <p className="text-red-500 text-xs">{profileError}</p>}
+
           <button
             type="submit"
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 rounded-xl transition-colors"
+            disabled={profileSubmitting}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors"
           >
-            {allowanceSaved ? 'Saved!' : 'Save'}
+            {profileSubmitting ? 'Saving…' : profileSaved ? 'Saved!' : 'Save profile'}
           </button>
         </form>
-        <p className="text-xs text-gray-400">
-          Current: <span className="font-medium text-gray-600">{formatARS(config.baseAllowance)}</span> / week
-        </p>
       </section>
 
       {/* Categories */}
       <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
         <div>
           <h2 className="font-semibold text-gray-800">Categories</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Colors are assigned automatically.
-          </p>
+          <p className="text-xs text-gray-400 mt-0.5">Colors are assigned automatically.</p>
         </div>
 
         <form onSubmit={addCategory} className="flex gap-2">
           <input
             type="text"
             value={categoryInput}
-            onChange={e => { setCategoryInput(e.target.value); setCategoryError('') }}
+            onChange={(e) => {
+              setCategoryInput(e.target.value)
+              setCategoryError('')
+            }}
             placeholder="New category name"
             className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
@@ -120,7 +183,7 @@ export function SettingsScreen({ config, onChange, categories, onCategoryAdded, 
         {categoryError && <p className="text-red-500 text-xs">{categoryError}</p>}
 
         <ul className="space-y-2">
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <li key={cat.id} className="flex items-center justify-between">
               <span
                 className="text-xs font-medium px-3 py-1.5 rounded-lg text-white"
@@ -142,7 +205,6 @@ export function SettingsScreen({ config, onChange, categories, onCategoryAdded, 
           )}
         </ul>
       </section>
-
     </div>
   )
 }

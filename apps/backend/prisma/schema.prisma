@@ -7,10 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id                      Int        @id @default(autoincrement())
+  name                    String
+  email                   String     @unique
+  passwordHash            String
+  expendableAmountPerWeek Float
+  role                    String     @default("user")
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
+  sessions                Session[]
+  categories              Category[]
+  expenses                Expense[]
+}
+
+model Session {
+  id        String   @id
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 model Category {
-  id    Int    @id @default(autoincrement())
-  name  String
-  color String
+  id     Int    @id @default(autoincrement())
+  name   String
+  color  String
+  userId Int
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Expense {
@@ -20,4 +48,8 @@ model Expense {
   category    String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

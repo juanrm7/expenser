@@ -1,39 +1,36 @@
 import { useState, useEffect } from 'react'
-import type { AppConfig } from '../lib/data'
-import { loadConfig, saveConfig } from '../lib/data'
 import { Header } from '../components/Header'
 import { SettingsScreen } from '../templates/SettingsScreen'
 import { getCategories, type Category } from '../services/categories'
+import { useAuth } from '../lib/useAuth'
+import type { AuthUser } from '../services/auth'
 
 export function SettingsPage() {
-  const [config, setConfig] = useState<AppConfig | null>(null)
+  const { user, loading } = useAuth()
   const [categories, setCategories] = useState<Category[]>([])
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
 
   useEffect(() => {
-    setConfig(loadConfig())
+    if (!user) return
+    setCurrentUser(user)
     async function fetchCategories() {
       const data = await getCategories()
       setCategories(data)
     }
     fetchCategories()
-  }, [])
+  }, [user])
 
-  if (!config) return null
-
-  function handleConfigChange(updated: AppConfig) {
-    setConfig(updated)
-    saveConfig(updated)
-  }
+  if (loading || !currentUser) return null
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header page="settings" />
+      <Header page="settings" user={currentUser} />
       <SettingsScreen
-        config={config}
-        onChange={handleConfigChange}
+        user={currentUser}
+        onUserChange={setCurrentUser}
         categories={categories}
-        onCategoryAdded={cat => setCategories(prev => [...prev, cat])}
-        onCategoryRemoved={id => setCategories(prev => prev.filter(c => c.id !== id))}
+        onCategoryAdded={(cat) => setCategories((prev) => [...prev, cat])}
+        onCategoryRemoved={(id) => setCategories((prev) => prev.filter((c) => c.id !== id))}
       />
     </div>
   )

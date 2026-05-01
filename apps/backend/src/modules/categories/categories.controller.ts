@@ -1,47 +1,40 @@
 import type { FastifyInstance } from 'fastify'
 import { CategoriesService } from './categories.service.js'
 import type { CreateCategoryBody, UpdateCategoryBody } from './categories.types.js'
-import { isNotFound } from '../../lib/prisma-errors.js'
+import { requireAuth } from '../../lib/auth-plugin.js'
 
 const service = new CategoriesService()
 
 export async function categoriesController(app: FastifyInstance) {
-  app.get('/categories', async () => {
-    return service.getAll()
+  app.addHook('preHandler', requireAuth)
+
+  app.get('/categories', async (req) => {
+    return service.getAll(req.user!.id)
   })
 
   app.get<{ Params: { id: string } }>('/categories/:id', async (req, reply) => {
-    const category = await service.getById(Number(req.params.id))
+    const category = await service.getById(req.user!.id, Number(req.params.id))
     if (!category) return reply.status(404).send({ message: 'Category not found' })
     return category
   })
 
   app.post<{ Body: CreateCategoryBody }>('/categories', async (req, reply) => {
-    const category = await service.create(req.body)
+    const category = await service.create(req.user!.id, req.body)
     return reply.status(201).send(category)
   })
 
   app.patch<{ Params: { id: string }; Body: UpdateCategoryBody }>(
     '/categories/:id',
     async (req, reply) => {
-      try {
-        return await service.update(Number(req.params.id), req.body)
-      } catch (err) {
-        if (isNotFound(err)) return reply.status(404).send({ message: 'Category not found' })
-        req.log.error(err)
-        return reply.status(500).send({ message: 'Internal server error' })
-      }
+      const category = await service.update(req.user!.id, Number(req.params.id), req.body)
+      if (!category) return reply.status(404).send({ message: 'Category not found' })
+      return category
     }
   )
 
   app.delete<{ Params: { id: string } }>('/categories/:id', async (req, reply) => {
-    try {
-      await service.delete(Number(req.params.id))
-      return reply.status(204).send()
-    } catch (err) {
-      if (isNotFound(err)) return reply.status(404).send({ message: 'Category not found' })
-      req.log.error(err)
-      return reply.status(500).send({ message: 'Internal server error' })
-    }
+    const ok = await service.delete(req.user!.id, Number(req.params.id))
+    if (!ok) return reply.status(404).send({ message: 'Category not found' })
+    return reply.status(204).send()
   })
 }

@@ -18,17 +18,20 @@ export interface ExpenseSummary {
 }
 
 export async function getExpenses(): Promise<Expense[]> {
-  const response = await fetch(`${env.backendUrl}/expenses`)
+  const response = await fetch(`${env.backendUrl}/expenses`, { credentials: 'include' })
   return response.json()
 }
 
 export async function getExpenseSummary(): Promise<ExpenseSummary> {
-  const response = await fetch(`${env.backendUrl}/expenses/summary`)
+  const response = await fetch(`${env.backendUrl}/expenses/summary`, { credentials: 'include' })
   return response.json()
 }
 
 export async function deleteExpense(id: number): Promise<void> {
-  const response = await fetch(`${env.backendUrl}/expenses/${id}`, { method: 'DELETE' })
+  const response = await fetch(`${env.backendUrl}/expenses/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
   if (!response.ok) throw new Error('Failed to delete expense')
 }
 
@@ -40,6 +43,7 @@ export async function createExpense(payload: {
   const response = await fetch(`${env.backendUrl}/expenses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error('Failed to create expense')

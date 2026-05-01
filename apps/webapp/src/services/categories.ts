@@ -7,7 +7,7 @@ export interface Category {
 }
 
 export async function getCategories(): Promise<Category[]> {
-  const response = await fetch(`${env.backendUrl}/categories`)
+  const response = await fetch(`${env.backendUrl}/categories`, { credentials: 'include' })
   return response.json()
 }
 
@@ -15,11 +15,15 @@ export async function createCategory(name: string, color: string): Promise<Categ
   const response = await fetch(`${env.backendUrl}/categories`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({ name, color }),
   })
   return response.json()
 }
 
 export async function deleteCategory(id: number): Promise<void> {
-  await fetch(`${env.backendUrl}/categories/${id}`, { method: 'DELETE' })
+  await fetch(`${env.backendUrl}/categories/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
 }
