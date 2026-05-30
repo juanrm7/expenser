@@ -4,12 +4,12 @@ import type { SessionUser } from '../auth/auth.types.js'
 
 function getCurrentWeekStart(): Date {
   const now = new Date()
-  const day = now.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  const monday = new Date(now)
-  monday.setDate(now.getDate() + diff)
-  monday.setHours(0, 0, 0, 0)
-  return monday
+  const day = now.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
+  const diff = day === 6 ? 0 : -(day + 1) // roll back to most recent Saturday
+  const saturday = new Date(now)
+  saturday.setDate(now.getDate() + diff)
+  saturday.setHours(0, 0, 0, 0)
+  return saturday
 }
 
 export class ExpensesService {
