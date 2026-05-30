@@ -92,7 +92,7 @@ apps/webapp/
 
 ## apps/backend
 
-**Stack:** Fastify 5, TypeScript, Prisma 6, SQLite
+**Stack:** Fastify 5, TypeScript, Prisma 6 — SQLite locally, [Turso](https://turso.tech) (hosted libSQL) in production via the Prisma libSQL driver adapter.
 
 A REST API following a controller/service architecture (similar to NestJS).
 
@@ -111,6 +111,7 @@ apps/backend/
 │   │       └── health.service.ts      # Business logic
 │   ├── app.ts             # Fastify app factory
 │   └── server.ts          # Entry point
+├── Dockerfile             # Multi-stage build for Cloud Run
 ├── .env.example
 ├── package.json
 └── tsconfig.json
@@ -135,8 +136,13 @@ cp apps/backend/.env.example apps/backend/.env
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | `file:./dev.db` | SQLite database path |
-| `PORT` | `3000` | Port the server listens on |
+| `DATABASE_URL` | `file:./dev.db` | SQLite path used by the **Prisma CLI** (migrations/generate) |
+| `TURSO_DATABASE_URL` | `file:./prisma/dev.db` | Runtime DB connection used by the libSQL adapter. In production a `libsql://…turso.io` URL |
+| `TURSO_AUTH_TOKEN` | — | Turso auth token. Required only for remote (`libsql://`) databases |
+| `PORT` | `3001` | Port the server listens on (Cloud Run injects `8080`) |
+| `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL) |
+| `SESSION_COOKIE_SECURE` | `false` | Set `true` in production so session cookies require HTTPS |
+| `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. Use `none` if the API and frontend are on different sites |
 
 ### Commands
 
@@ -146,10 +152,87 @@ cp apps/backend/.env.example apps/backend/.env
 | `pnpm build` | Compile to `dist/` |
 | `pnpm start` | Run the compiled build |
 | `pnpm db:generate` | Generate Prisma client |
-| `pnpm db:migrate` | Run database migrations |
+| `pnpm db:migrate` | Run database migrations (local dev) |
+| `pnpm db:turso:sql` | Print the full schema as SQL (for applying to Turso) |
+| `pnpm deploy` | Build the image via Cloud Build and deploy to Cloud Run |
+
+---
+
+## Deployment
+
+The backend runs on **GCP Cloud Run** with the database on **Turso**. There is no CI/CD — deploys are run manually from your machine. Images are built by **Cloud Build** (no local Docker required) from the multi-stage [`apps/backend/Dockerfile`](apps/backend/Dockerfile), using the repo root as build context (see [`cloudbuild.yaml`](cloudbuild.yaml)).
+
+The target project, region, Artifact Registry repo, and service name live in [`apps/backend/.env.deploy`](apps/backend/.env.deploy) and are read by [`deploy.sh`](apps/backend/deploy.sh) — edit that file to point at a different environment.
+
+| Resource | `.env.deploy` key | Value |
+| :--- | :--- | :--- |
+| GCP project | `GCP_PROJECT` | `juan-custom-apps` |
+| Region | `GCP_REGION` | `us-central1` |
+| Artifact Registry repo | `AR_REPO` | `containers` |
+| Cloud Run service | `SERVICE_NAME` | `expenser-backend` |
+| Custom domain | — | `https://expenser-api.juanromerodev.com` |
+| Database | — | Turso DB `expenser` (libSQL) |
+| Secrets | — | `TURSO_AUTH_TOKEN` → Secret Manager (`turso-auth-token`) |
+
+### Prerequisites (one-time)
+
+```sh
+# Load the deploy config so the commands below stay in sync with .env.deploy
+set -a && source apps/backend/.env.deploy && set +a
+
+# Authenticate and select the project
+gcloud auth login
+gcloud config set project "$GCP_PROJECT"
+
+# Enable APIs
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com secretmanager.googleapis.com
+
+# Artifact Registry repo
+gcloud artifacts repositories create "$AR_REPO" \
+  --repository-format=docker --location="$GCP_REGION"
+
+# Store the Turso token as a secret + grant the runtime service account access
+printf "%s" "$(turso db tokens create expenser)" | \
+  gcloud secrets create turso-auth-token --data-file=-
+PNUM=$(gcloud projects describe "$GCP_PROJECT" --format='value(projectNumber)')
+gcloud secrets add-iam-policy-binding turso-auth-token \
+  --member="serviceAccount:${PNUM}-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+### Apply the schema to Turso
+
+Prisma can't run `migrate deploy` against a remote `libsql://` URL, so apply the schema as raw SQL via the Turso CLI:
+
+```sh
+pnpm --filter @expenser/backend db:turso:sql > /tmp/init.sql
+turso db shell expenser < /tmp/init.sql
+```
+
+### Redeploy (the common case)
+
+After code changes, from `apps/backend`:
+
+```sh
+pnpm deploy
+```
+
+This runs [`deploy.sh`](apps/backend/deploy.sh), which reads `.env.deploy`, builds a fresh image via Cloud Build, and rolls out a new Cloud Run revision. Existing env vars and secrets are preserved across deploys.
+
+### Updating environment variables
+
+Env vars live on the Cloud Run service, not in the image — change them without rebuilding:
+
+```sh
+gcloud run services update "$SERVICE_NAME" --region "$GCP_REGION" \
+  --update-env-vars KEY=VALUE
+```
+
+The production service sets: `TURSO_DATABASE_URL`, `WEBAPP_URL`, `SESSION_COOKIE_SECURE=true`, `SESSION_COOKIE_SAMESITE`, `NODE_ENV=production`, plus the `TURSO_AUTH_TOKEN` secret.
 
 ### Endpoints
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
-| `GET` | `/` | Returns `{ message: "Hello World" }` |
+| `GET` | `/health` | Health check (no DB access) |

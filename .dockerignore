@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.turbo
+**/.git
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+apps/backend/prisma/*.db
+apps/backend/prisma/*.db-journal
+.DS_Store

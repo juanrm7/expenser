@@ -11,16 +11,14 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:migrate:prod": "prisma migrate deploy",
-    "pm2:start": "pm2 start dist/server.js --name expenser-backend",
-    "pm2:stop": "pm2 stop expenser-backend",
-    "pm2:restart": "pm2 restart expenser-backend",
-    "pm2:logs": "pm2 logs expenser-backend",
-    "deploy": "pnpm build && pnpm db:migrate:prod && pnpm pm2:restart"
+    "db:turso:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
+    "deploy": "bash deploy.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
+    "@libsql/client": "^0.17.3",
+    "@prisma/adapter-libsql": "^6.19.2",
     "@prisma/client": "^6.5.0",
     "bcrypt": "^6.0.0",
     "fastify": "^5.3.2",

@@ -15,7 +15,7 @@ const COOKIE_NAME = 'session_id'
 function setSessionCookie(reply: FastifyReply, sessionId: string, expiresAt: Date) {
   reply.setCookie(COOKIE_NAME, sessionId, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: env.cookieSameSite,
     secure: env.cookieSecure,
     path: '/',
     expires: expiresAt,
@@ -23,7 +23,11 @@ function setSessionCookie(reply: FastifyReply, sessionId: string, expiresAt: Dat
 }
 
 function clearSessionCookie(reply: FastifyReply) {
-  reply.clearCookie(COOKIE_NAME, { path: '/' })
+  reply.clearCookie(COOKIE_NAME, {
+    path: '/',
+    sameSite: env.cookieSameSite,
+    secure: env.cookieSecure,
+  })
 }
 
 export async function authController(app: FastifyInstance) {

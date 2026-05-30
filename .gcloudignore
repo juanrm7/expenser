@@ -1,0 +1,12 @@
+# Keep the uploaded build context small. Mirrors .dockerignore.
+.git
+**/node_modules
+**/dist
+**/.turbo
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+apps/backend/prisma/*.db
+apps/backend/prisma/*.db-journal
+.DS_Store
