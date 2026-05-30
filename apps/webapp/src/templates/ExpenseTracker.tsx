@@ -102,20 +102,20 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-3">
         <h2 className="font-semibold text-gray-700">Add expense</h2>
 
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <input
             type="number"
             inputMode="decimal"
             placeholder="Amount in ARS"
             value={amount}
             onChange={e => setAmount(e.target.value)}
-            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="w-full sm:flex-1 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
           <select
             value={categoryId ?? ''}
             onChange={e => setCategoryId(Number(e.target.value))}
             disabled={categories.length === 0}
-            className="border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+            className="w-full sm:w-auto border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
           >
             {categories.length === 0 && <option value="">No categories</option>}
             {categories.map(c => (
