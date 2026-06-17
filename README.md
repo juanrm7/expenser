@@ -160,6 +160,10 @@ cp apps/backend/.env.example apps/backend/.env
 
 ## Deployment
 
+> The **frontend** is a static site served from **Cloud Storage + Cloud CDN** (see
+> [Frontend deployment](#frontend-deployment-cloud-cdn) below). The **backend** runs on
+> **Cloud Run**. Both are manual deploys from your machine; no CI/CD.
+
 The backend runs on **GCP Cloud Run** with the database on **Turso**. There is no CI/CD — deploys are run manually from your machine. Images are built by **Cloud Build** (no local Docker required) from the multi-stage [`apps/backend/Dockerfile`](apps/backend/Dockerfile), using the repo root as build context (see [`cloudbuild.yaml`](cloudbuild.yaml)).
 
 The target project, region, Artifact Registry repo, and service name live in [`apps/backend/.env.deploy`](apps/backend/.env.deploy) and are read by [`deploy.sh`](apps/backend/deploy.sh) — edit that file to point at a different environment.
@@ -236,3 +240,62 @@ The production service sets: `TURSO_DATABASE_URL`, `WEBAPP_URL`, `SESSION_COOKIE
 | Method | Path | Description |
 | :--- | :--- | :--- |
 | `GET` | `/health` | Health check (no DB access) |
+
+---
+
+## Frontend deployment (Cloud CDN)
+
+The webapp is a static [Astro](https://astro.build) build (`apps/webapp/dist`) served from a
+**Cloud Storage bucket** behind an **external HTTPS Load Balancer with Cloud CDN**. There is no
+CI/CD — deploys are run manually. Config lives in
+[`apps/webapp/.env.deploy`](apps/webapp/.env.deploy) and is read by both scripts below.
+
+| Resource | `.env.deploy` key | Value |
+| :--- | :--- | :--- |
+| GCP project | `GCP_PROJECT` | `juan-custom-apps` |
+| Region | `GCP_REGION` | `us-central1` |
+| Bucket | `BUCKET` | `expenser-webapp` |
+| Custom domain | `DOMAIN` | `https://expenser.juanromerodev.com` |
+| Static IP / cert / backend bucket / URL map | `IP_NAME` / `CERT_NAME` / `BACKEND_BUCKET` / `URLMAP` | `expenser-webapp-*` |
+
+### Provision the infrastructure (one-time)
+
+[`apps/webapp/infra/setup-cdn.sh`](apps/webapp/infra/setup-cdn.sh) creates the bucket, backend
+bucket (CDN), load balancer, managed SSL cert, static IP, and an HTTP→HTTPS redirect. It is
+idempotent.
+
+```sh
+gcloud services enable compute.googleapis.com storage.googleapis.com   # one-time
+./apps/webapp/infra/setup-cdn.sh
+```
+
+It prints the reserved static IP. **Point DNS at it** (DigitalOcean → Networking → Domains →
+`juanromerodev.com` → set the `expenser` **A** record to that IP). The managed cert only goes
+`ACTIVE` once DNS resolves to the IP. If a `CAA` record exists on the domain it must allow
+`pki.goog`.
+
+```sh
+# Watch the cert until it reports ACTIVE
+gcloud compute ssl-certificates describe expenser-webapp-cert \
+  --project juan-custom-apps --global --format='value(managed.status)'
+```
+
+### Redeploy (the common case)
+
+```sh
+pnpm --filter @expenser/webapp deploy
+```
+
+This runs [`apps/webapp/deploy.sh`](apps/webapp/deploy.sh): builds the site, `rsync`s `dist/`
+to the bucket (deleting stale objects), sets cache headers (fingerprinted assets
+`immutable`; `*.html` / `sw.js` / `manifest.webmanifest` / `workbox-*.js` set to `no-cache` so
+PWA updates roll out), and invalidates the CDN cache.
+
+### Cutover & teardown
+
+1. Provision (`setup-cdn.sh`) and do the first `deploy`.
+2. Flip the DNS A record to the GCP static IP; wait for the cert to go `ACTIVE`.
+3. Verify `https://expenser.juanromerodev.com` loads and the app reaches the API.
+4. Stop/disable the old self-hosted nginx serving the site.
+
+Rollback is a DNS change back to the previous IP (keep the TTL low — e.g. 300s — during cutover).
