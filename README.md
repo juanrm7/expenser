@@ -283,8 +283,11 @@ gcloud compute ssl-certificates describe expenser-webapp-cert \
 ### Redeploy (the common case)
 
 ```sh
-pnpm --filter @expenser/webapp deploy
+pnpm --filter @expenser/webapp run deploy
 ```
+
+(Use `run deploy`, not `deploy` — bare `pnpm deploy` is a built-in pnpm command and won't
+invoke this package script.)
 
 This runs [`apps/webapp/deploy.sh`](apps/webapp/deploy.sh): builds the site, `rsync`s `dist/`
 to the bucket (deleting stale objects), sets cache headers (fingerprinted assets
