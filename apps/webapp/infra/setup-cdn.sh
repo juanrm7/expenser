@@ -81,7 +81,7 @@ cat <<DONE
 Done. Next steps:
   1. Point DNS: set the '${DOMAIN%%.*}' A record to  ->  $IP_ADDR
      (DigitalOcean: Networking -> Domains -> juanromerodev.com)
-  2. Upload the site:  pnpm --filter @expenser/webapp deploy
+  2. Upload the site:  pnpm --filter @expenser/webapp run deploy
   3. Wait for the cert to become ACTIVE (DNS must resolve to the IP first):
      gcloud compute ssl-certificates describe $CERT_NAME --project $GCP_PROJECT --global \\
        --format='value(managed.status)'

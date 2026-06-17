@@ -195,7 +195,7 @@ Accessed via `import.meta.env.PUBLIC_BACKEND_URL` (Astro public variable convent
 Static build served from a **Cloud Storage bucket behind an HTTPS Load Balancer with Cloud CDN**
 (project `juan-custom-apps`, domain `expenser.juanromerodev.com`). Config in
 `apps/webapp/.env.deploy`. One-time infra: `apps/webapp/infra/setup-cdn.sh`. Redeploy:
-`pnpm --filter @expenser/webapp deploy` (runs `apps/webapp/deploy.sh` — build, `rsync` to bucket,
+`pnpm --filter @expenser/webapp run deploy` (runs `apps/webapp/deploy.sh` — build, `rsync` to bucket,
 set cache headers, invalidate CDN). The app is multi-page SSG; the bucket uses
 `MainPageSuffix=index.html` and a `404.html` error page. See README "Frontend deployment".
 
