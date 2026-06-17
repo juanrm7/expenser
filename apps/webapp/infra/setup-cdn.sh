@@ -23,7 +23,7 @@ create() {
   if "$@" 2>/tmp/gcloud_err; then
     return 0
   fi
-  if grep -qiE 'already exists|alreadyExists' /tmp/gcloud_err; then
+  if grep -qiE 'already exists|alreadyExists|already own it|HTTPError 409' /tmp/gcloud_err; then
     echo "  (already exists, skipping)"
     return 0
   fi
@@ -56,13 +56,13 @@ echo "==> 5. URL map $URLMAP -> backend bucket"
 create gcloud compute url-maps create "$URLMAP" "${P[@]}" \
   --default-backend-bucket "$BACKEND_BUCKET"
 
-echo "==> 6. Target HTTPS proxy $HTTPS_PROXY"
-create gcloud compute target-https-proxies create "$HTTPS_PROXY" "${P[@]}" \
+echo "==> 6. Target HTTPS proxy $HTTPS_PROXY_NAME"
+create gcloud compute target-https-proxies create "$HTTPS_PROXY_NAME" "${P[@]}" \
   --url-map "$URLMAP" --ssl-certificates "$CERT_NAME"
 
 echo "==> 7. HTTPS forwarding rule $FR_HTTPS (:443)"
 create gcloud compute forwarding-rules create "$FR_HTTPS" "${P[@]}" \
-  --global --address "$IP_NAME" --target-https-proxy "$HTTPS_PROXY" --ports 443
+  --global --address "$IP_NAME" --target-https-proxy "$HTTPS_PROXY_NAME" --ports 443
 
 echo "==> 8. HTTP->HTTPS redirect (:80)"
 create gcloud compute url-maps import "$REDIRECT_URLMAP" "${P[@]}" --global --source=- <<EOF
@@ -71,10 +71,10 @@ defaultUrlRedirect:
   redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
   httpsRedirect: true
 EOF
-create gcloud compute target-http-proxies create "$HTTP_PROXY" "${P[@]}" \
+create gcloud compute target-http-proxies create "$HTTP_PROXY_NAME" "${P[@]}" \
   --url-map "$REDIRECT_URLMAP"
 create gcloud compute forwarding-rules create "$FR_HTTP" "${P[@]}" \
-  --global --address "$IP_NAME" --target-http-proxy "$HTTP_PROXY" --ports 80
+  --global --address "$IP_NAME" --target-http-proxy "$HTTP_PROXY_NAME" --ports 80
 
 cat <<DONE
 
