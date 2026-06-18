@@ -49,8 +49,14 @@ create gcloud compute ssl-certificates create "$CERT_NAME" "${P[@]}" \
   --global --domains "$DOMAIN"
 
 echo "==> 4. Backend bucket $BACKEND_BUCKET (Cloud CDN enabled)"
+# USE_ORIGIN_HEADERS: honor the Cache-Control we set per-object in deploy.sh
+# (fingerprinted assets immutable for 1y, HTML/sw.js no-cache). The default
+# CACHE_ALL_STATIC mode rewrites max-age down to clientTtl (3600s).
 create gcloud compute backend-buckets create "$BACKEND_BUCKET" "${P[@]}" \
-  --gcs-bucket-name "$BUCKET" --enable-cdn
+  --gcs-bucket-name "$BUCKET" --enable-cdn --cache-mode=USE_ORIGIN_HEADERS
+# Ensure mode is set even if the backend bucket already existed.
+gcloud compute backend-buckets update "$BACKEND_BUCKET" "${P[@]}" \
+  --cache-mode=USE_ORIGIN_HEADERS >/dev/null
 
 echo "==> 5. URL map $URLMAP -> backend bucket"
 create gcloud compute url-maps create "$URLMAP" "${P[@]}" \
