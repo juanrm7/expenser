@@ -3,6 +3,7 @@ import { formatARS } from '../lib/data'
 import type { ExpenseSummary } from '../services/expenses'
 import { createExpense, deleteExpense, getExpenseSummary } from '../services/expenses'
 import type { Category } from '../services/categories'
+import { writeHomeCache } from '../lib/cache'
 
 interface Props {
   summary: ExpenseSummary
@@ -47,7 +48,9 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
       await createExpense({ amount: parsed, description, categoryId })
       setAmount('')
       setDescription('')
-      setSummary(await getExpenseSummary())
+      const fresh = await getExpenseSummary()
+      setSummary(fresh)
+      writeHomeCache({ summary: fresh, categories })
     } catch {
       setError('Failed to add expense. Please try again.')
     } finally {
@@ -167,7 +170,9 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
                   <button
                     onClick={async () => {
                       await deleteExpense(expense.id)
-                      setSummary(await getExpenseSummary())
+                      const fresh = await getExpenseSummary()
+                      setSummary(fresh)
+                      writeHomeCache({ summary: fresh, categories })
                     }}
                     className="text-gray-300 hover:text-red-400 transition-colors"
                     aria-label="Delete expense"
