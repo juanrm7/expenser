@@ -28,7 +28,7 @@ const isProd = import.meta.env.PROD
     )}
     <title>{title}</title>
   </head>
-  <body>
+  <body class="bg-gray-50">
     <slot />
     {isProd && (
       <script is:inline>

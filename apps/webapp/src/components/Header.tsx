@@ -1,6 +1,7 @@
 import { Home, LogOut, Settings } from 'lucide-react'
 import { logout } from '../services/auth'
 import type { AuthUser } from '../services/auth'
+import { clearCache } from '../lib/cache'
 
 interface Props {
   page: 'home' | 'settings'
@@ -12,6 +13,7 @@ export function Header({ page, user }: Props) {
     try {
       await logout()
     } finally {
+      clearCache()
       window.location.href = '/login'
     }
   }
