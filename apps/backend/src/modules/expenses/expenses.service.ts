@@ -12,6 +12,14 @@ function getCurrentWeekStart(): Date {
   return saturday
 }
 
+function getCurrentMonthRange(): { start: Date; end: Date; days: number } {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0) // first day of next month
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() // last day-of-month number
+  return { start, end, days }
+}
+
 export class ExpensesService {
   getAll(userId: number) {
     return prisma.expense.findMany({
@@ -22,18 +30,37 @@ export class ExpensesService {
 
   async getWeeklySummary(user: SessionUser) {
     const weekStart = getCurrentWeekStart()
-    const expenses = await prisma.expense.findMany({
-      where: { userId: user.id, createdAt: { gte: weekStart } },
-      orderBy: { createdAt: 'desc' },
-    })
+    const month = getCurrentMonthRange()
+
+    const [expenses, monthlyAgg] = await Promise.all([
+      prisma.expense.findMany({
+        where: { userId: user.id, createdAt: { gte: weekStart } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.expense.aggregate({
+        where: { userId: user.id, createdAt: { gte: month.start, lt: month.end } },
+        _sum: { amount: true },
+      }),
+    ])
+
     const spent = expenses.reduce((sum, e) => sum + e.amount, 0)
     const allowance = user.expendableAmountPerWeek
+
+    const monthlySpent = monthlyAgg._sum.amount ?? 0
+    const monthlyAllowance = (allowance / 7) * month.days
+
     return {
       weekStart: weekStart.toISOString().split('T')[0],
       allowance,
       spent,
       available: allowance - spent,
       expenses,
+      monthly: {
+        monthStart: month.start.toISOString().split('T')[0],
+        allowance: monthlyAllowance,
+        spent: monthlySpent,
+        available: monthlyAllowance - monthlySpent,
+      },
     }
   }
 

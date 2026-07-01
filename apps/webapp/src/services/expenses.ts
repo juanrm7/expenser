@@ -9,12 +9,20 @@ export interface Expense {
   updatedAt: Date
 }
 
+export interface MonthlySummary {
+  monthStart: string
+  allowance: number
+  spent: number
+  available: number
+}
+
 export interface ExpenseSummary {
   weekStart: string
   allowance: number
   spent: number
   available: number
   expenses: Expense[]
+  monthly: MonthlySummary
 }
 
 export async function getExpenses(): Promise<Expense[]> {
