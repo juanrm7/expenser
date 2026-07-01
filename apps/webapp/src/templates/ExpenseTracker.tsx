@@ -27,9 +27,15 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
     if (!valid) setCategoryId(categories[0].id)
   }, [categories])
 
-  const { allowance, spent, available, expenses, weekStart } = summary
+  const { allowance, spent, available, expenses, weekStart, monthly } = summary
   const isOver = available < 0
   const pctUsed = Math.min((spent / allowance) * 100, 100)
+
+  const monthOver = monthly.available < 0
+  const monthPctUsed = Math.min((monthly.spent / monthly.allowance) * 100, 100)
+  const monthLabel = new Date(monthly.monthStart + 'T12:00:00').toLocaleDateString('en-US', {
+    month: 'long',
+  })
 
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
@@ -81,6 +87,26 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
               style={{ width: `${pctUsed}%` }}
             />
           </div>
+        </div>
+      </div>
+
+      {/* Monthly overview — secondary */}
+      <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-baseline justify-between">
+          <span className="text-xs font-medium text-gray-500">{monthLabel} so far</span>
+          <span className={`text-sm font-semibold tabular-nums ${monthOver ? 'text-red-500' : 'text-gray-700'}`}>
+            {formatARS(monthly.available)} left
+          </span>
+        </div>
+        <div className="mt-2 w-full bg-gray-100 rounded-full h-1.5">
+          <div
+            className={`h-1.5 rounded-full transition-all ${monthOver ? 'bg-red-400' : 'bg-indigo-500'}`}
+            style={{ width: `${monthPctUsed}%` }}
+          />
+        </div>
+        <div className="mt-1 flex justify-between text-[11px] text-gray-400 tabular-nums">
+          <span>{formatARS(monthly.spent)} spent</span>
+          <span>{formatARS(monthly.allowance)} budget</span>
         </div>
       </div>
 
