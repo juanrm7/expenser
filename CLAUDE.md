@@ -12,7 +12,7 @@ expenser/
 ├── apps/
 │   ├── backend/    # Fastify REST API + Prisma + SQLite (libSQL/Turso adapter)
 │   └── webapp/     # Astro + React + Tailwind CSS (installable PWA)
-├── cloudbuild.yaml # Cloud Build config for the backend Docker image
+├── deploy/         # Droplet deploy: deploy.sh, pm2 ecosystem.config.cjs, nginx/ server blocks
 ├── turbo.json
 ├── pnpm-workspace.yaml
 └── package.json
@@ -37,7 +37,7 @@ expenser/
 
 - Dev: `tsx watch src/server.ts`
 - Build: `tsup` → `dist/server.js` (ESM)
-- Server runs on `http://localhost:3001` (Cloud Run injects `PORT`, defaults to `8080` there)
+- Server runs on `http://localhost:3001` (`PORT`/`HOST` env; pm2 binds `127.0.0.1` in production)
 
 ### Source structure
 
@@ -148,9 +148,10 @@ DATABASE_URL="file:./dev.db"        # Prisma CLI (migrate/generate)
 TURSO_DATABASE_URL="file:./prisma/dev.db"  # Runtime connection (libSQL adapter); libsql://... in prod
 TURSO_AUTH_TOKEN=                   # Required only for remote (libsql://) databases
 PORT=3001
+HOST=0.0.0.0                        # pm2 sets 127.0.0.1 in production (behind nginx)
 WEBAPP_URL=http://localhost:4321    # Allowed CORS origin
 SESSION_COOKIE_SECURE=false         # true in production (HTTPS-only cookies)
-SESSION_COOKIE_SAMESITE=lax         # "none" if API and webapp are cross-site (requires secure=true)
+SESSION_COOKIE_SAMESITE=lax         # lax in prod too (expenser.* + expenser-api.* are same-site)
 ```
 
 `lib/prisma.ts` always goes through the `@prisma/adapter-libsql` driver adapter — locally it points
@@ -268,33 +269,31 @@ Accessed via `import.meta.env.PUBLIC_BACKEND_URL` (Astro public variable convent
 
 ### Deployment
 
-Static build served from a **Cloud Storage bucket behind an HTTPS Load Balancer with Cloud CDN**
-(project `juan-custom-apps`, domain `expenser.juanromerodev.com`). Config in
-`apps/webapp/.env.deploy`. One-time infra: `apps/webapp/infra/setup-cdn.sh`. Redeploy:
-`pnpm --filter @expenser/webapp run deploy` (runs `apps/webapp/deploy.sh` — build, `rsync` to bucket,
-set cache headers, invalidate CDN). The app is multi-page SSG; the bucket uses
-`MainPageSuffix=index.html` and a `404.html` error page. See README "Frontend deployment".
+Static build `rsync`ed to `/var/www/expenser` on the droplet and served by nginx
+(`deploy/nginx/expenser.conf`) at `expenser.juanromerodev.com`. `PUBLIC_BACKEND_URL` comes from
+`apps/webapp/.env` on the droplet and is baked in at build time. See "Deployment" below.
 
 ---
 
-## Backend deployment
+## Deployment
 
-The backend runs on **GCP Cloud Run**, database on **Turso** (hosted libSQL). Manual deploys only,
-no CI/CD. Config lives in `apps/backend/.env.deploy` (project, region, Artifact Registry repo,
-service name); `apps/backend/deploy.sh` reads it, builds the image via Cloud Build
-(`cloudbuild.yaml`, using the repo root as build context so the pnpm workspace resolves), and
-rolls out a new Cloud Run revision.
+Both apps run on a single **DigitalOcean droplet**; the database is on **Turso** (hosted libSQL).
+Manual deploys only, no CI/CD. Everything lives in `deploy/`:
 
-- Redeploy: `pnpm --filter @expenser/backend deploy` (i.e. `bash apps/backend/deploy.sh`)
-- Image build: `apps/backend/Dockerfile` — multi-stage (`node:24-slim`), installs the pnpm
-  workspace scoped to the backend, runs `prisma generate` twice (once at build, once again inside
-  the pruned `--prod` deploy output so the engine binary matches that node_modules tree), runs as
-  the unprivileged `node` user, listens on `PORT` (Cloud Run sets `8080`).
-- Prisma can't `migrate deploy` against a remote `libsql://` URL — apply schema changes to Turso as
+- `deploy/deploy.sh` runs on the droplet: `git pull`, `pnpm install`, builds the backend (tsup) and
+  webapp (astro) per-package (not via turbo, whose cache doesn't see the gitignored `.env` files),
+  `rsync`s `apps/webapp/dist/` to `/var/www/expenser`, then `pm2 startOrReload` + `pm2 save`.
+- `deploy/ecosystem.config.cjs`: pm2 app `expenser-backend` runs `apps/backend/dist/server.js`
+  with `node --env-file=.env` (reads `apps/backend/.env`), `HOST=127.0.0.1`.
+- `deploy/nginx/expenser.conf` serves the static site (`/_astro/` immutable, everything else
+  `no-cache` for PWA updates). `deploy/nginx/expenser-api.conf` proxies
+  `expenser-api.juanromerodev.com` → `127.0.0.1:3001`. TLS is added by `certbot --nginx`.
+- Redeploy: on the droplet, `cd ~/expenser && pnpm run deploy` (not bare `pnpm deploy`, a pnpm built-in).
+- Backend env vars live in `apps/backend/.env` on the droplet: edit it, then
+  `pm2 reload deploy/ecosystem.config.cjs --update-env`.
+- Prisma can't `migrate deploy` against a remote `libsql://` URL, so apply schema changes to Turso as
   raw SQL: `pnpm --filter @expenser/backend db:turso:sql | turso db shell expenser`.
-- Env vars live on the Cloud Run service, not the image — update without rebuilding via
-  `gcloud run services update`.
-- See README "Deployment" for the full one-time setup and endpoint details.
+- See README "Deployment" for the one-time droplet setup.
 
 ---
 
