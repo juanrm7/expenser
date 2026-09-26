@@ -11,6 +11,7 @@ expenser/
 ├── apps/
 │   ├── webapp/          # Astro + React + Tailwind frontend
 │   └── backend/         # Fastify + Prisma + SQLite REST API
+├── deploy/             # Droplet deploy script, pm2 config, nginx server blocks
 ├── package.json         # Root scripts and workspace config
 ├── pnpm-workspace.yaml
 └── turbo.json
@@ -111,7 +112,6 @@ apps/backend/
 │   │       └── health.service.ts      # Business logic
 │   ├── app.ts             # Fastify app factory
 │   └── server.ts          # Entry point
-├── Dockerfile             # Multi-stage build for Cloud Run
 ├── .env.example
 ├── package.json
 └── tsconfig.json
@@ -139,10 +139,11 @@ cp apps/backend/.env.example apps/backend/.env
 | `DATABASE_URL` | `file:./dev.db` | SQLite path used by the **Prisma CLI** (migrations/generate) |
 | `TURSO_DATABASE_URL` | `file:./prisma/dev.db` | Runtime DB connection used by the libSQL adapter. In production a `libsql://…turso.io` URL |
 | `TURSO_AUTH_TOKEN` | — | Turso auth token. Required only for remote (`libsql://`) databases |
-| `PORT` | `3001` | Port the server listens on (Cloud Run injects `8080`) |
+| `PORT` | `3001` | Port the server listens on |
+| `HOST` | `0.0.0.0` | Interface to bind. pm2 sets `127.0.0.1` in production so only nginx can reach it |
 | `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL) |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` in production so session cookies require HTTPS |
-| `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. Use `none` if the API and frontend are on different sites |
+| `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. `lax` works for `expenser.*` + `expenser-api.*` (same site); `none` only if they're on different sites |
 
 ### Commands
 
@@ -154,56 +155,92 @@ cp apps/backend/.env.example apps/backend/.env
 | `pnpm db:generate` | Generate Prisma client |
 | `pnpm db:migrate` | Run database migrations (local dev) |
 | `pnpm db:turso:sql` | Print the full schema as SQL (for applying to Turso) |
-| `pnpm deploy` | Build the image via Cloud Build and deploy to Cloud Run |
 
 ---
 
 ## Deployment
 
-> The **frontend** is a static site served from **Cloud Storage + Cloud CDN** (see
-> [Frontend deployment](#frontend-deployment-cloud-cdn) below). The **backend** runs on
-> **Cloud Run**. Both are manual deploys from your machine; no CI/CD.
+Both apps run on a single **DigitalOcean droplet**, with the database on **Turso**. Deploys are manual
+(no CI/CD): SSH into the droplet and run the deploy script.
 
-The backend runs on **GCP Cloud Run** with the database on **Turso**. There is no CI/CD — deploys are run manually from your machine. Images are built by **Cloud Build** (no local Docker required) from the multi-stage [`apps/backend/Dockerfile`](apps/backend/Dockerfile), using the repo root as build context (see [`cloudbuild.yaml`](cloudbuild.yaml)).
-
-The target project, region, Artifact Registry repo, and service name live in [`apps/backend/.env.deploy`](apps/backend/.env.deploy) and are read by [`deploy.sh`](apps/backend/deploy.sh) — edit that file to point at a different environment.
-
-| Resource | `.env.deploy` key | Value |
+| Piece | How it runs | URL |
 | :--- | :--- | :--- |
-| GCP project | `GCP_PROJECT` | `juan-custom-apps` |
-| Region | `GCP_REGION` | `us-central1` |
-| Artifact Registry repo | `AR_REPO` | `containers` |
-| Cloud Run service | `SERVICE_NAME` | `expenser-backend` |
-| Custom domain | — | `https://expenser-api.juanromerodev.com` |
-| Database | — | Turso DB `expenser` (libSQL) |
-| Secrets | — | `TURSO_AUTH_TOKEN` → Secret Manager (`turso-auth-token`) |
+| Webapp | Static Astro build in `/var/www/expenser`, served by nginx | `https://expenser.juanromerodev.com` |
+| Backend | `node dist/server.js` under **pm2** on `127.0.0.1:3001`, reverse-proxied by nginx | `https://expenser-api.juanromerodev.com` |
+| Database | Turso DB `expenser` (libSQL) | — |
 
-### Prerequisites (one-time)
+Everything lives in [`deploy/`](deploy):
+
+- [`deploy/deploy.sh`](deploy/deploy.sh) pulls, installs, builds both apps, `rsync`s the webapp to the web root, and reloads pm2
+- [`deploy/ecosystem.config.cjs`](deploy/ecosystem.config.cjs) is the pm2 process definition (loads `apps/backend/.env`)
+- [`deploy/nginx/`](deploy/nginx) has one server block per domain
+
+### One-time droplet setup
 
 ```sh
-# Load the deploy config so the commands below stay in sync with .env.deploy
-set -a && source apps/backend/.env.deploy && set +a
+# System packages (Ubuntu)
+sudo apt update && sudo apt install -y nginx certbot python3-certbot-nginx rsync git build-essential
+# Node 22+ (e.g. via nvm or NodeSource), then pnpm + pm2
+corepack enable && corepack prepare pnpm@10 --activate
+npm install -g pm2
 
-# Authenticate and select the project
-gcloud auth login
-gcloud config set project "$GCP_PROJECT"
+# Firewall: only SSH + HTTP(S)
+sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
 
-# Enable APIs
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com secretmanager.googleapis.com
+# Code + web root (owned by the deploy user so deploy.sh can write without sudo)
+git clone git@github.com:juanrm7/expenser.git ~/expenser && cd ~/expenser
+sudo mkdir -p /var/www/expenser && sudo chown "$USER" /var/www/expenser
 
-# Artifact Registry repo
-gcloud artifacts repositories create "$AR_REPO" \
-  --repository-format=docker --location="$GCP_REGION"
-
-# Store the Turso token as a secret + grant the runtime service account access
-printf "%s" "$(turso db tokens create expenser)" | \
-  gcloud secrets create turso-auth-token --data-file=-
-PNUM=$(gcloud projects describe "$GCP_PROJECT" --format='value(projectNumber)')
-gcloud secrets add-iam-policy-binding turso-auth-token \
-  --member="serviceAccount:${PNUM}-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
+# Production env files (gitignored)
+cp apps/backend/.env.example apps/backend/.env   # then edit, see below
+echo 'PUBLIC_BACKEND_URL=https://expenser-api.juanromerodev.com' > apps/webapp/.env
 ```
+
+Production `apps/backend/.env`:
+
+```sh
+TURSO_DATABASE_URL=libsql://<db>-<org>.turso.io
+TURSO_AUTH_TOKEN=<turso db tokens create expenser>
+PORT=3001
+WEBAPP_URL=https://expenser.juanromerodev.com
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE=lax
+```
+
+nginx + TLS:
+
+```sh
+sudo cp deploy/nginx/expenser.conf deploy/nginx/expenser-api.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/expenser.conf /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/expenser-api.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+# After DNS points at the droplet:
+sudo certbot --nginx -d expenser.juanromerodev.com -d expenser-api.juanromerodev.com
+```
+
+First deploy, then make pm2 survive reboots:
+
+```sh
+pnpm run deploy
+pm2 startup   # prints a sudo command, run it
+pm2 save
+```
+
+**DNS:** in DigitalOcean → Networking → Domains → `juanromerodev.com`, point the `expenser` and
+`expenser-api` **A** records at the droplet's IP.
+
+### Redeploy (the common case)
+
+```sh
+ssh <droplet> 'cd ~/expenser && pnpm run deploy'
+```
+
+(Use `run deploy`, not `deploy`, since bare `pnpm deploy` is a built-in pnpm command.) Set `BRANCH=...`
+to deploy something other than `main`, or `WEB_ROOT=...` for a different nginx root.
+
+To change backend env vars, edit `apps/backend/.env` and run
+`pm2 reload deploy/ecosystem.config.cjs --update-env`. Changing `apps/webapp/.env` requires a
+redeploy, because the values are baked into the build. Logs: `pm2 logs expenser-backend`.
 
 ### Apply the schema to Turso
 
@@ -214,91 +251,8 @@ pnpm --filter @expenser/backend db:turso:sql > /tmp/init.sql
 turso db shell expenser < /tmp/init.sql
 ```
 
-### Redeploy (the common case)
-
-After code changes, from `apps/backend`:
-
-```sh
-pnpm deploy
-```
-
-This runs [`deploy.sh`](apps/backend/deploy.sh), which reads `.env.deploy`, builds a fresh image via Cloud Build, and rolls out a new Cloud Run revision. Existing env vars and secrets are preserved across deploys.
-
-### Updating environment variables
-
-Env vars live on the Cloud Run service, not in the image — change them without rebuilding:
-
-```sh
-gcloud run services update "$SERVICE_NAME" --region "$GCP_REGION" \
-  --update-env-vars KEY=VALUE
-```
-
-The production service sets: `TURSO_DATABASE_URL`, `WEBAPP_URL`, `SESSION_COOKIE_SECURE=true`, `SESSION_COOKIE_SAMESITE`, `NODE_ENV=production`, plus the `TURSO_AUTH_TOKEN` secret.
-
 ### Endpoints
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
 | `GET` | `/health` | Health check (no DB access) |
-
----
-
-## Frontend deployment (Cloud CDN)
-
-The webapp is a static [Astro](https://astro.build) build (`apps/webapp/dist`) served from a
-**Cloud Storage bucket** behind an **external HTTPS Load Balancer with Cloud CDN**. There is no
-CI/CD — deploys are run manually. Config lives in
-[`apps/webapp/.env.deploy`](apps/webapp/.env.deploy) and is read by both scripts below.
-
-| Resource | `.env.deploy` key | Value |
-| :--- | :--- | :--- |
-| GCP project | `GCP_PROJECT` | `juan-custom-apps` |
-| Region | `GCP_REGION` | `us-central1` |
-| Bucket | `BUCKET` | `expenser-webapp` |
-| Custom domain | `DOMAIN` | `https://expenser.juanromerodev.com` |
-| Static IP / cert / backend bucket / URL map | `IP_NAME` / `CERT_NAME` / `BACKEND_BUCKET` / `URLMAP` | `expenser-webapp-*` |
-
-### Provision the infrastructure (one-time)
-
-[`apps/webapp/infra/setup-cdn.sh`](apps/webapp/infra/setup-cdn.sh) creates the bucket, backend
-bucket (CDN), load balancer, managed SSL cert, static IP, and an HTTP→HTTPS redirect. It is
-idempotent.
-
-```sh
-gcloud services enable compute.googleapis.com storage.googleapis.com   # one-time
-./apps/webapp/infra/setup-cdn.sh
-```
-
-It prints the reserved static IP. **Point DNS at it** (DigitalOcean → Networking → Domains →
-`juanromerodev.com` → set the `expenser` **A** record to that IP). The managed cert only goes
-`ACTIVE` once DNS resolves to the IP. If a `CAA` record exists on the domain it must allow
-`pki.goog`.
-
-```sh
-# Watch the cert until it reports ACTIVE
-gcloud compute ssl-certificates describe expenser-webapp-cert \
-  --project juan-custom-apps --global --format='value(managed.status)'
-```
-
-### Redeploy (the common case)
-
-```sh
-pnpm --filter @expenser/webapp run deploy
-```
-
-(Use `run deploy`, not `deploy` — bare `pnpm deploy` is a built-in pnpm command and won't
-invoke this package script.)
-
-This runs [`apps/webapp/deploy.sh`](apps/webapp/deploy.sh): builds the site, `rsync`s `dist/`
-to the bucket (deleting stale objects), sets cache headers (fingerprinted assets
-`immutable`; `*.html` / `sw.js` / `manifest.webmanifest` / `workbox-*.js` set to `no-cache` so
-PWA updates roll out), and invalidates the CDN cache.
-
-### Cutover & teardown
-
-1. Provision (`setup-cdn.sh`) and do the first `deploy`.
-2. Flip the DNS A record to the GCP static IP; wait for the cert to go `ACTIVE`.
-3. Verify `https://expenser.juanromerodev.com` loads and the app reaches the API.
-4. Stop/disable the old self-hosted nginx serving the site.
-
-Rollback is a DNS change back to the previous IP (keep the TTL low — e.g. 300s — during cutover).

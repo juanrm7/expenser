@@ -9,8 +9,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro",
-    "deploy": "./deploy.sh"
+    "astro": "astro"
   },
   "dependencies": {
     "@astrojs/react": "^5.0.0",

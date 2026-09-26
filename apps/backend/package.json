@@ -11,8 +11,7 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:turso:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
-    "deploy": "bash deploy.sh"
+    "db:turso:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
