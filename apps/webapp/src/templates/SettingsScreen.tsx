@@ -111,7 +111,7 @@ export function SettingsScreen({
               type="text"
               value={nameInput}
               onChange={(e) => setNameInput(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base sm:text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </div>
 
@@ -127,7 +127,7 @@ export function SettingsScreen({
               step="0.01"
               value={allowanceInput}
               onChange={(e) => setAllowanceInput(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base sm:text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
             <p className="text-xs text-gray-400 mt-1">
               Current:{' '}
@@ -170,7 +170,7 @@ export function SettingsScreen({
               setCategoryError('')
             }}
             placeholder="New category name"
-            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-base sm:text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
           <button
             type="submit"
