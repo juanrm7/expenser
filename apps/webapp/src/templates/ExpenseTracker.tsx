@@ -136,13 +136,13 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
             placeholder="Amount in ARS"
             value={amount}
             onChange={e => setAmount(e.target.value)}
-            className="w-full sm:flex-1 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="w-full sm:flex-1 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
           <select
             value={categoryId ?? ''}
             onChange={e => setCategoryId(Number(e.target.value))}
             disabled={categories.length === 0}
-            className="w-full sm:w-auto border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+            className="w-full sm:w-auto border border-gray-200 rounded-xl px-3 py-3 text-gray-800 text-base sm:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
           >
             {categories.length === 0 && <option value="">No categories</option>}
             {categories.map(c => (
@@ -156,7 +156,7 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
           placeholder="Description (optional)"
           value={description}
           onChange={e => setDescription(e.target.value)}
-          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
 
         {error && <p className="text-red-500 text-xs">{error}</p>}
