@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { env } from './env.js'
 import { ExpenserBot } from './expenser.js'
 import { extractExpenses, SUPPORTED_EXTENSIONS } from './gemini.js'
+import { Ledger } from './ledger.js'
 import type { Extraction } from './types.js'
 
 export function isImage(path: string): boolean {
@@ -25,29 +26,41 @@ export async function processImages(images: string[], { dryRun = false } = {}): 
   if (images.length === 0) return
   await Promise.all([env.processedDir, env.failedDir].map(d => mkdir(d, { recursive: true })))
 
+  const ledger = await Ledger.load()
   const bot = await ExpenserBot.open()
   try {
     const categories = await bot.getCategories()
     console.log(`[expenser] categories: ${categories.join(', ')}`)
 
     for (const image of images) {
-      await processImage(bot, image, categories, dryRun)
+      await processImage(bot, ledger, image, categories, dryRun)
     }
   } finally {
     await bot.close()
   }
 }
 
-async function processImage(bot: ExpenserBot, image: string, categories: string[], dryRun: boolean) {
+async function processImage(
+  bot: ExpenserBot,
+  ledger: Ledger,
+  image: string,
+  categories: string[],
+  dryRun: boolean,
+) {
   const name = basename(image)
   let extraction: Extraction | undefined
   let added = 0
+  let skipped = 0
 
   try {
     console.log(`\n[${name}] extracting with ${env.geminiModel}…`)
     extraction = await extractExpenses(image, categories)
     if (extraction.notes) console.log(`[${name}] notes: ${extraction.notes}`)
-    console.table(extraction.expenses)
+
+    const keys = Ledger.keysFor(extraction.expenses)
+    console.table(
+      extraction.expenses.map((e, i) => ({ ...e, status: ledger.has(keys[i]) ? 'already added' : 'new' })),
+    )
 
     if (extraction.expenses.length === 0) throw new Error('No expenses found in image')
     if (dryRun) {
@@ -55,20 +68,25 @@ async function processImage(bot: ExpenserBot, image: string, categories: string[
       return
     }
 
-    for (const expense of extraction.expenses) {
+    for (const [i, expense] of extraction.expenses.entries()) {
+      if (ledger.has(keys[i])) {
+        skipped++
+        continue
+      }
       await bot.addExpense(expense)
+      await ledger.add(keys[i], expense, name)
       added++
       console.log(`[${name}] ✓ added ${expense.amount} ARS · ${expense.category} · ${expense.description}`)
     }
 
-    await archive(image, env.processedDir, { extraction, added })
-    console.log(`[${name}] done (${added} expense${added === 1 ? '' : 's'})`)
+    await archive(image, env.processedDir, { extraction, added, skipped })
+    console.log(`[${name}] done — ${added} added, ${skipped} already added before`)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[${name}] ✗ ${message}`)
     if (dryRun) return
-    // `added` tells you which expenses already went in, so a retry doesn't double-log them.
-    await archive(image, env.failedDir, { error: message, extraction, added })
+    // Expenses added before the error are in the ledger, so moving the image back to the inbox is safe.
+    await archive(image, env.failedDir, { error: message, extraction, added, skipped })
   }
 }
 

@@ -8,3 +8,6 @@ failed/*
 
 # Saved Playwright login session
 .auth/
+
+# Local record of added expenses (dedup across overlapping screenshots)
+ledger.json

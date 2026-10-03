@@ -30,4 +30,5 @@ export const env = {
   headless: process.env.HEADLESS?.trim().toLowerCase() !== 'false',
   browserExecutablePath: process.env.BROWSER_EXECUTABLE_PATH?.trim() || undefined,
   authStatePath: resolve(appRoot, '.auth/state.json'),
+  ledgerPath: resolve(appRoot, 'ledger.json'),
 }

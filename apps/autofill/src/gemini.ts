@@ -28,9 +28,11 @@ const responseSchema = {
           amount: { type: Type.NUMBER, description: 'Amount in ARS as a plain number, e.g. 12345.5' },
           description: { type: Type.STRING, description: 'Short description, max ~60 chars' },
           category: { type: Type.STRING, description: 'Exactly one of the allowed category names' },
+          date: { type: Type.STRING, description: 'YYYY-MM-DD, or "" if no date is visible' },
+          merchant: { type: Type.STRING, description: 'Merchant/transaction text verbatim as printed' },
         },
-        required: ['amount', 'description', 'category'],
-        propertyOrdering: ['amount', 'description', 'category'],
+        required: ['merchant', 'date', 'amount', 'description', 'category'],
+        propertyOrdering: ['merchant', 'date', 'amount', 'description', 'category'],
       },
     },
     notes: { type: Type.STRING },
@@ -40,21 +42,31 @@ const responseSchema = {
 }
 
 function buildPrompt(categories: string[]): string {
+  const today = new Date().toLocaleDateString('en-CA') // local YYYY-MM-DD
   return `You extract personal expenses from an image so they can be logged in an expense tracker.
-The image may be a store receipt, an invoice, a bank/Mercado Pago/card transaction screenshot,
-a list of purchases, or a handwritten note. Amounts are in Argentine Pesos (ARS).
+The image may be a store receipt, an invoice, a credit card / bank / Mercado Pago transaction list
+(e.g. Naranja X "Tus consumos"), or a handwritten note. Amounts are in Argentine Pesos (ARS).
+Today is ${today}.
 
 Rules:
 - Return one expense per distinct payment/transaction. For a single receipt, return ONE expense
   with the final total actually paid (after discounts, including taxes/tip) — not each line item.
-  For a screenshot listing several transactions, return one expense per outgoing transaction.
-- Ignore incoming money, refunds, balances, and transfers between the user's own accounts.
+  For a transaction list, return one expense per outgoing transaction, in the order shown.
+- Include transactions marked pending ("Pendiente de autorización", "En proceso") — they are real
+  purchases. Ignore incoming money, refunds, reversals ("Anulado"), balances, and card payments.
+- Only include rows whose amount is fully visible. Skip rows cut off at the top or bottom edge.
 - Argentine number format uses "." for thousands and "," for decimals: "$ 12.345,50" is 12345.5.
   Return amount as a plain positive number.
-- description: short and useful, e.g. the merchant name plus what was bought ("Coto - groceries",
-  "Uber to airport"). Write it in the same language as the image.
+- merchant: the transaction text exactly as printed, character for character (e.g. "Merpago coto").
+- date: the transaction date as YYYY-MM-DD ("3/OCT/26" is 2026-10-03; a date without a year is the
+  most recent such date on or before today). Use "" if the image shows no date.
+- description: a clean, short name for the purchase. Drop payment-processor prefixes such as
+  "Merpago", "MERPAGO*", "MP *", "PAYU*", "DLO*" and fix capitalisation: "Merpago coto" -> "Coto",
+  "Franco specialty coffe" -> "Franco Specialty Coffee". Add what was bought only if the image says.
 - category: pick the best fit from EXACTLY this list (copy the name verbatim):
   ${categories.map(c => JSON.stringify(c)).join(', ')}
+  Supermarkets, cafés, restaurants and food delivery are food. Payments to what looks like a
+  person's name (e.g. "christianjesuslop") are unknown — use the catch-all category if there is one.
 - If nothing in the image is an expense, return an empty list and explain why in notes.
 - Use notes for anything uncertain (blurry digits, guessed category, etc.); otherwise "".`
 }
@@ -91,6 +103,8 @@ export async function extractExpenses(imagePath: string, categories: string[]): 
         amount: Math.round(e.amount * 100) / 100,
         description: e.description.trim(),
         category: matchCategory(e.category, categories),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(e.date ?? '') ? e.date : '',
+        merchant: (e.merchant ?? '').trim(),
       })),
   }
 }

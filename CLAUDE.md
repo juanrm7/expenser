@@ -287,11 +287,14 @@ How it works: an image lands in `inbox/` → `gemini.ts` sends it, together with
 names, to Gemini with a JSON `responseSchema` → `expenser.ts` (`ExpenserBot`) logs into the real
 webapp and submits the "Add expense" form once per expense, waiting for each `POST /expenses` → 201
 → `pipeline.ts` moves the image to `processed/` or `failed/` with a sidecar `.json` report.
+`ledger.ts` records every added expense in `ledger.json` (key: date + amount + verbatim merchant
+text + an occurrence counter) and skips matches, because users screenshot growing card statement
+lists ("Tus consumos") that repeat earlier rows.
 
 - Scripts: `start` (watch mode, batched), `once`, `dry-run`, `setup` (`playwright install chromium`).
 - Config: `apps/autofill/.env` (see `.env.example`), loaded by `src/env.ts` via `process.loadEnvFile`.
-- Login state is saved to `.auth/state.json` and reused. `inbox/`, `processed/`, `failed/` and
-  `.auth/` are gitignored (receipts are personal data).
+- Login state is saved to `.auth/state.json` and reused. `inbox/`, `processed/`, `failed/`,
+  `.auth/` and `ledger.json` are gitignored (receipts are personal data).
 - Selectors depend on the webapp markup: the `Amount in ARS` / `Description (optional)` placeholders,
   the form's `<select>`, the `Add Expense` button, and `#email`/`#password` on `/login`. If you
   change `ExpenseTracker.tsx` or `LoginForm.tsx`, update `src/expenser.ts` to match.
