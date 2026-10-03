@@ -4,22 +4,25 @@ A bot that runs on your own machine. Drop a photo or screenshot of a receipt int
 
 1. Send the image to **Gemini**, which pulls out the expenses (amount, description, category). The
    prompt includes your actual Expenser categories, so Gemini picks from those.
-2. Open the Expenser webapp with **Playwright**, log in as you, and fill in the "Add expense"
-   form for each expense, the same way you would by hand.
+2. Add each expense to your account. With an **API key** (recommended) it calls the Expenser
+   backend directly. Without one, it opens the webapp with **Playwright**, logs in as you, and
+   fills in the "Add expense" form, the same way you would by hand.
 3. Skip any transaction it has already added from an earlier image (see "Overlapping screenshots").
 4. Move the image to `processed/` with a `.json` report of what it added. If anything goes wrong,
    the image goes to `failed/` with the error instead.
 
-It drives the real UI, not the API, so it goes through the same validation and category lookup a
-person would. No backend changes are needed.
+Either way it goes through the same backend validation and category lookup as the webapp.
 
 ## Setup (once)
 
 ```sh
 pnpm install                                   # from the repo root
-pnpm --filter @expenser/autofill setup         # downloads Playwright's Chromium
 cp apps/autofill/.env.example apps/autofill/.env
+pnpm --filter @expenser/autofill setup         # only for browser mode: downloads Chromium
 ```
+
+To use API mode, open Expenser → **Settings → API keys**, create a key (e.g. "Laptop autofill"),
+copy it (it's only shown once), and paste it into `EXPENSER_API_KEY`. Revoke it there at any time.
 
 Fill in `apps/autofill/.env`:
 
@@ -27,11 +30,13 @@ Fill in `apps/autofill/.env`:
 |---|---|
 | `GEMINI_API_KEY` | From https://aistudio.google.com/apikey |
 | `GEMINI_MODEL` | Default `gemini-3.8-flash` |
-| `EXPENSER_URL` | `https://expenser.juanromerodev.com`, or `http://localhost:4321` for local dev |
-| `EXPENSER_EMAIL` / `EXPENSER_PASSWORD` | The Expenser account to add expenses to |
+| `EXPENSER_API_KEY` | API key from Settings → API keys. When set, API mode is used |
+| `EXPENSER_API_URL` | API mode: `https://expenser-api.juanromerodev.com`, or `http://localhost:3001` locally |
+| `EXPENSER_URL` | Browser mode: `https://expenser.juanromerodev.com`, or `http://localhost:4321` locally |
+| `EXPENSER_EMAIL` / `EXPENSER_PASSWORD` | Browser mode: the Expenser account to log in as |
 | `INBOX_DIR` / `PROCESSED_DIR` / `FAILED_DIR` | Default `./inbox`, `./processed`, `./failed` (relative to `apps/autofill`) |
-| `HEADLESS` | `false` shows the browser while it works |
-| `BROWSER_EXECUTABLE_PATH` | Optional: use an installed Chrome instead of Playwright's Chromium |
+| `HEADLESS` | Browser mode: `false` shows the browser while it works |
+| `BROWSER_EXECUTABLE_PATH` | Browser mode, optional: use an installed Chrome instead of Playwright's Chromium |
 
 ## Usage
 
@@ -45,8 +50,8 @@ Supported formats: `.jpg`, `.jpeg`, `.png`, `.webp`, `.heic`, `.heif`.
 
 Tip: point `INBOX_DIR` at a folder that syncs from your phone (iCloud Drive, Google Drive,
 Syncthing, etc.). Then sharing a receipt photo to that folder is all it takes to log it. Watch
-mode waits until a file has finished writing before reading it, and handles several images dropped
-at once in a single browser session.
+mode waits until a file has finished writing before reading it, and processes several images
+dropped at once as one batch.
 
 ### Overlapping screenshots
 
@@ -64,7 +69,7 @@ be added again if it later shows up in a screenshot. Delete `ledger.json` to sta
 
 ### Notes
 
-- **Session:** after the first login, Playwright saves the browser session to `.auth/state.json`
+- **Session (browser mode):** after the first login, Playwright saves the browser session to `.auth/state.json`
   (gitignored) and reuses it, so it doesn't open a new backend session on every run. Delete the
   file to force a fresh login.
 - **What Gemini extracts:** one expense per payment. A single receipt becomes one expense for its
@@ -75,7 +80,7 @@ be added again if it later shows up in a screenshot. Delete `ledger.json` to sta
   there is no `Other`).
 - **Failures:** to retry an image in `failed/`, move it back into `inbox/`. Expenses saved before
   the error are already in the ledger and won't be added again. If the whole batch fails (bad
-  login, network down), the images stay in `inbox/`. Run `once` after fixing the problem.
+  login, revoked API key, network down), the images stay in `inbox/`. Run `once` after fixing the problem.
 - **Dates:** the date Gemini extracts is only used to detect duplicates. The webapp always records
   expenses at the current time, so an old purchase counts toward this week.
 - **Privacy:** the bot and browser run on your machine. The only thing sent to Google is the

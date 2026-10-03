@@ -13,3 +13,11 @@ export interface Extraction {
   /** Free-text remark from the model (e.g. "image is blurry", "total only, no line items") */
   notes: string
 }
+
+/** Where extracted expenses get written: the backend API, or the webapp via Playwright. */
+export interface ExpenseSink {
+  /** Category names the user has, used to steer Gemini and to resolve categoryId */
+  getCategories(): Promise<string[]>
+  addExpense(expense: ExtractedExpense): Promise<void>
+  close(): Promise<void>
+}

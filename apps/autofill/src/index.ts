@@ -11,7 +11,13 @@ await mkdir(env.inboxDir, { recursive: true })
 if (mode === 'once') {
   const images = await listInbox()
   if (images.length === 0) console.log(`Inbox is empty: ${env.inboxDir}`)
-  await processImages(images, { dryRun })
+  try {
+    await processImages(images, { dryRun })
+  } catch (err) {
+    // Batch-level failure (bad key/login, backend down): images stay in the inbox.
+    console.error('[autofill] failed:', err instanceof Error ? err.message : err)
+    process.exitCode = 1
+  }
 } else if (mode === 'watch') {
   startWatching()
 } else {

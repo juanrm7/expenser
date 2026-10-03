@@ -1,10 +1,11 @@
 import { mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { env } from './env.js'
+import { ExpenserApi } from './api.js'
 import { ExpenserBot } from './expenser.js'
 import { extractExpenses, SUPPORTED_EXTENSIONS } from './gemini.js'
 import { Ledger } from './ledger.js'
-import type { Extraction } from './types.js'
+import type { ExpenseSink, Extraction } from './types.js'
 
 export function isImage(path: string): boolean {
   return SUPPORTED_EXTENSIONS.includes(extname(path).toLowerCase())
@@ -19,29 +20,30 @@ export async function listInbox(): Promise<string[]> {
 }
 
 /**
- * Processes a batch of images with one browser session: extract each with Gemini, add the
- * expenses through the webapp, then move the image to processed/ or failed/ with a JSON report.
+ * Processes a batch of images: extract each with Gemini, add the expenses (via the API when an
+ * API key is configured, otherwise through the webapp in one browser session), then move the
+ * image to processed/ or failed/ with a JSON report.
  */
 export async function processImages(images: string[], { dryRun = false } = {}): Promise<void> {
   if (images.length === 0) return
   await Promise.all([env.processedDir, env.failedDir].map(d => mkdir(d, { recursive: true })))
 
   const ledger = await Ledger.load()
-  const bot = await ExpenserBot.open()
+  const sink: ExpenseSink = env.expenserApiKey ? await ExpenserApi.open() : await ExpenserBot.open()
   try {
-    const categories = await bot.getCategories()
+    const categories = await sink.getCategories()
     console.log(`[expenser] categories: ${categories.join(', ')}`)
 
     for (const image of images) {
-      await processImage(bot, ledger, image, categories, dryRun)
+      await processImage(sink, ledger, image, categories, dryRun)
     }
   } finally {
-    await bot.close()
+    await sink.close()
   }
 }
 
 async function processImage(
-  bot: ExpenserBot,
+  sink: ExpenseSink,
   ledger: Ledger,
   image: string,
   categories: string[],
@@ -73,7 +75,7 @@ async function processImage(
         skipped++
         continue
       }
-      await bot.addExpense(expense)
+      await sink.addExpense(expense)
       await ledger.add(keys[i], expense, name)
       added++
       console.log(`[${name}] ✓ added ${expense.amount} ARS · ${expense.category} · ${expense.description}`)

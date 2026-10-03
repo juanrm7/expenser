@@ -28,7 +28,7 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
-function toSessionUser(user: {
+export function toSessionUser(user: {
   id: number
   name: string
   email: string

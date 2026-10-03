@@ -3,6 +3,8 @@ import { Trash2 } from 'lucide-react'
 import { formatARS, randomHexColor } from '../lib/data'
 import { createCategory, deleteCategory, type Category } from '../services/categories'
 import { updateProfile, type AuthUser } from '../services/auth'
+import type { ApiKey } from '../services/apiKeys'
+import { ApiKeysSection } from '../components/ApiKeysSection'
 
 interface Props {
   user: AuthUser
@@ -10,6 +12,9 @@ interface Props {
   categories: Category[]
   onCategoryAdded: (category: Category) => void
   onCategoryRemoved: (id: number) => void
+  apiKeys: ApiKey[]
+  onApiKeyCreated: (apiKey: ApiKey) => void
+  onApiKeyRevoked: (id: number) => void
 }
 
 export function SettingsScreen({
@@ -18,6 +23,9 @@ export function SettingsScreen({
   categories,
   onCategoryAdded,
   onCategoryRemoved,
+  apiKeys,
+  onApiKeyCreated,
+  onApiKeyRevoked,
 }: Props) {
   const [nameInput, setNameInput] = useState(user.name)
   const [allowanceInput, setAllowanceInput] = useState(String(user.expendableAmountPerWeek))
@@ -205,6 +213,12 @@ export function SettingsScreen({
           )}
         </ul>
       </section>
+
+      <ApiKeysSection
+        apiKeys={apiKeys}
+        onApiKeyCreated={onApiKeyCreated}
+        onApiKeyRevoked={onApiKeyRevoked}
+      />
     </div>
   )
 }

@@ -3,13 +3,14 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright'
 import { env } from './env.js'
-import type { ExtractedExpense } from './types.js'
+import type { ExpenseSink, ExtractedExpense } from './types.js'
 
 /**
  * Drives the real Expenser webapp: logs in (reusing a saved session when possible) and fills
- * the "Add expense" form on the home page, exactly like a person would.
+ * the "Add expense" form on the home page, exactly like a person would. Used when no
+ * EXPENSER_API_KEY is configured.
  */
-export class ExpenserBot {
+export class ExpenserBot implements ExpenseSink {
   private browser!: Browser
   private context!: BrowserContext
   private page!: Page
