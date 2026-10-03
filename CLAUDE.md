@@ -11,7 +11,8 @@ per-user accounts. Full-stack TypeScript monorepo.
 expenser/
 ├── apps/
 │   ├── backend/    # Fastify REST API + Prisma + SQLite (libSQL/Turso adapter)
-│   └── webapp/     # Astro + React + Tailwind CSS (installable PWA)
+│   ├── webapp/     # Astro + React + Tailwind CSS (installable PWA)
+│   └── autofill/   # Local-only bot: receipt image → Gemini → Playwright fills the webapp form
 ├── deploy/         # Droplet deploy: deploy.sh, pm2 ecosystem.config.cjs, nginx/ server blocks
 ├── turbo.json
 ├── pnpm-workspace.yaml
@@ -28,6 +29,7 @@ expenser/
 | `pnpm --filter @expenser/backend db:migrate` | Run DB migrations (local dev) |
 | `pnpm --filter @expenser/backend dev` | Backend only (`http://localhost:3001`) |
 | `pnpm --filter @expenser/webapp dev` | Webapp only (`http://localhost:4321`) |
+| `pnpm --filter @expenser/autofill start` | Run the receipt bot (watches `apps/autofill/inbox/`) |
 
 ---
 
@@ -272,6 +274,27 @@ Accessed via `import.meta.env.PUBLIC_BACKEND_URL` (Astro public variable convent
 Static build `rsync`ed to `/var/www/expenser` on the droplet and served by nginx
 (`deploy/nginx/expenser.conf`) at `expenser.juanromerodev.com`. `PUBLIC_BACKEND_URL` comes from
 `apps/webapp/.env` on the droplet and is baked in at build time. See "Deployment" below.
+
+---
+
+## Autofill bot (`apps/autofill`)
+
+**Stack:** Node + TypeScript run with `tsx` (no build step), `@google/genai`, `playwright`,
+`chokidar`. It runs only on the user's laptop. It isn't deployed, and it deliberately has no
+`dev`/`build` scripts so `turbo dev`/`turbo build` skip it.
+
+How it works: an image lands in `inbox/` → `gemini.ts` sends it, together with the user's category
+names, to Gemini with a JSON `responseSchema` → `expenser.ts` (`ExpenserBot`) logs into the real
+webapp and submits the "Add expense" form once per expense, waiting for each `POST /expenses` → 201
+→ `pipeline.ts` moves the image to `processed/` or `failed/` with a sidecar `.json` report.
+
+- Scripts: `start` (watch mode, batched), `once`, `dry-run`, `setup` (`playwright install chromium`).
+- Config: `apps/autofill/.env` (see `.env.example`), loaded by `src/env.ts` via `process.loadEnvFile`.
+- Login state is saved to `.auth/state.json` and reused. `inbox/`, `processed/`, `failed/` and
+  `.auth/` are gitignored (receipts are personal data).
+- Selectors depend on the webapp markup: the `Amount in ARS` / `Description (optional)` placeholders,
+  the form's `<select>`, the `Add Expense` button, and `#email`/`#password` on `/login`. If you
+  change `ExpenseTracker.tsx` or `LoginForm.tsx`, update `src/expenser.ts` to match.
 
 ---
 

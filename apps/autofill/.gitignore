@@ -1,0 +1,10 @@
+# Local working folders — receipts are personal data, never commit them
+inbox/*
+processed/*
+failed/*
+!inbox/.gitkeep
+!processed/.gitkeep
+!failed/.gitkeep
+
+# Saved Playwright login session
+.auth/
