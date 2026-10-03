@@ -9,6 +9,7 @@ import { healthController } from './modules/health/health.controller.js'
 import { authController } from './modules/auth/auth.controller.js'
 import { categoriesController } from './modules/categories/categories.controller.js'
 import { expensesController } from './modules/expenses/expenses.controller.js'
+import { apiKeysController } from './modules/api-keys/api-keys.controller.js'
 
 export function buildApp() {
   const app = Fastify({
@@ -32,6 +33,7 @@ export function buildApp() {
   app.register(authController)
   app.register(categoriesController)
   app.register(expensesController)
+  app.register(apiKeysController)
 
   return app
 }

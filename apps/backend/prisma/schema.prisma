@@ -19,6 +19,7 @@ model User {
   sessions                Session[]
   categories              Category[]
   expenses                Expense[]
+  apiKeys                 ApiKey[]
 }
 
 model Session {
@@ -50,6 +51,19 @@ model Expense {
   updatedAt   DateTime @updatedAt
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  name       String
+  prefix     String    // First characters of the key, shown in the UI to tell keys apart
+  keyHash    String    @unique // SHA-256 of the full key; the key itself is never stored
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

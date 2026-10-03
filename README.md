@@ -10,7 +10,8 @@ This is a [Turborepo](https://turbo.build) + [pnpm workspaces](https://pnpm.io/w
 expenser/
 ├── apps/
 │   ├── webapp/          # Astro + React + Tailwind frontend
-│   └── backend/         # Fastify + Prisma + SQLite REST API
+│   ├── backend/         # Fastify + Prisma + SQLite REST API
+│   └── autofill/        # Local bot: receipt image → Gemini → Playwright adds the expenses
 ├── deploy/             # Droplet deploy script, pm2 config, nginx server blocks
 ├── package.json         # Root scripts and workspace config
 ├── pnpm-workspace.yaml

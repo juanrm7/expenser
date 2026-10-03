@@ -11,7 +11,8 @@ per-user accounts. Full-stack TypeScript monorepo.
 expenser/
 ├── apps/
 │   ├── backend/    # Fastify REST API + Prisma + SQLite (libSQL/Turso adapter)
-│   └── webapp/     # Astro + React + Tailwind CSS (installable PWA)
+│   ├── webapp/     # Astro + React + Tailwind CSS (installable PWA)
+│   └── autofill/   # Local-only bot: receipt image → Gemini → expenses via API key (or Playwright)
 ├── deploy/         # Droplet deploy: deploy.sh, pm2 ecosystem.config.cjs, nginx/ server blocks
 ├── turbo.json
 ├── pnpm-workspace.yaml
@@ -28,6 +29,7 @@ expenser/
 | `pnpm --filter @expenser/backend db:migrate` | Run DB migrations (local dev) |
 | `pnpm --filter @expenser/backend dev` | Backend only (`http://localhost:3001`) |
 | `pnpm --filter @expenser/webapp dev` | Webapp only (`http://localhost:4321`) |
+| `pnpm --filter @expenser/autofill start` | Run the receipt bot (watches `apps/autofill/inbox/`) |
 
 ---
 
@@ -56,7 +58,8 @@ src/
     ├── health/
     ├── auth/          # signup/login/logout/me, session cookie issuance
     ├── categories/    # per-user categories
-    └── expenses/      # per-user expenses + weekly/monthly summary
+    ├── expenses/      # per-user expenses + weekly/monthly summary
+    └── api-keys/      # per-user API keys (create/list/revoke) + key → user lookup
 ```
 
 ### Module pattern
@@ -96,12 +99,20 @@ export class CategoriesService {
 
 ### Authentication
 
-Session-based auth using an httpOnly cookie (`session_id`), not JWTs.
+Session-based auth using an httpOnly cookie (`session_id`), not JWTs, plus per-user **API keys**
+for scripts (`Authorization: Bearer exp_...`).
 
 - `auth-plugin.ts` runs on every request: reads the cookie, loads the session + user from the DB,
-  and sets `req.user` (`SessionUser | null`). Nothing is auto-rejected — routes opt in via `requireAuth`.
+  and sets `req.user` (`SessionUser | null`) and `req.authMethod` (`'session' | 'apiKey' | null`).
+  With no valid session it falls back to a Bearer API key. Nothing is auto-rejected — routes opt
+  in via `requireAuth`.
 - `requireAuth` (exported from `lib/auth-plugin.ts`) is a `preHandler` that 401s if `req.user` is null.
-  Every module except `health` and the `signup`/`login` routes uses it.
+  Every module except `health` and the `signup`/`login` routes uses it. It accepts both auth methods.
+- `requireSession` additionally 403s API-key requests. The `api-keys` module uses it, so a leaked
+  key can't create or revoke keys.
+- API keys: `exp_` + 32 random bytes (base64url). Only a SHA-256 hash (`keyHash`, unique, used for
+  lookup) and a display `prefix` are stored; the full key is returned once by `POST /api-keys`.
+  Revoking deletes the row. `lastUsedAt` is updated at most once a minute per key. Max 10 per user.
 - Sessions live in the `Session` table (30-day expiry), created on signup/login, deleted on logout
   or lazily on expiry check.
 - Passwords are hashed with bcrypt (cost 10). Signup validates name/email/password/allowance and
@@ -132,6 +143,11 @@ Session-based auth using an httpOnly cookie (`session_id`), not JWTs.
 | POST | `/expenses` | required | Create expense (body: `{ amount, description, categoryId }`) |
 | PATCH | `/expenses/:id` | required | Update expense |
 | DELETE | `/expenses/:id` | required | Delete expense (204) |
+| GET | `/api-keys` | session only | List the user's API keys (name, prefix, lastUsedAt, createdAt) |
+| POST | `/api-keys` | session only | Create a key (body: `{ name }`); response includes the full `key`, shown once |
+| DELETE | `/api-keys/:id` | session only | Revoke a key (204) |
+
+"Required" accepts a session cookie or an API key; "session only" rejects API keys with 403.
 
 **Weekly/monthly summary (`ExpensesService.getWeeklySummary`):**
 - The week "starts" on the most recent **Saturday** (see `getCurrentWeekStart` in
@@ -180,6 +196,7 @@ src/
 │   └── Layout.astro        # Base HTML shell; registers the PWA service worker in prod
 ├── components/
 │   ├── Header.tsx          # Shared nav header (shows user name, settings/home toggle, logout)
+│   ├── ApiKeysSection.tsx  # Settings: create (key shown once + copy), list, revoke API keys
 │   └── HomeSkeleton.tsx    # HeaderSkeleton / HomeSkeleton loading placeholders
 ├── renderers/
 │   ├── HomePage.tsx        # Fetches summary+categories once authed, owns page state
@@ -194,7 +211,8 @@ src/
 ├── services/
 │   ├── auth.ts              # signup, login, logout, getCurrentUser, updateProfile
 │   ├── expenses.ts          # getExpenses, getExpenseSummary, createExpense, deleteExpense
-│   └── categories.ts        # getCategories, createCategory, deleteCategory
+│   ├── categories.ts        # getCategories, createCategory, deleteCategory
+│   └── apiKeys.ts           # getApiKeys, createApiKey, revokeApiKey
 ├── lib/
 │   ├── apiFetch.ts           # fetch wrapper: prefixes backendUrl, adds x-correlation-id, credentials:'include', console-logs each request
 │   ├── useAuth.ts            # React hook: shows cached user immediately, revalidates via /auth/me, redirects to /login if unauthenticated
@@ -275,6 +293,32 @@ Static build `rsync`ed to `/var/www/expenser` on the droplet and served by nginx
 
 ---
 
+## Autofill bot (`apps/autofill`)
+
+**Stack:** Node + TypeScript run with `tsx` (no build step), `@google/genai`, `playwright`,
+`chokidar`. It runs only on the user's laptop. It isn't deployed, and it deliberately has no
+`dev`/`build` scripts so `turbo dev`/`turbo build` skip it.
+
+How it works: an image lands in `inbox/` → `gemini.ts` sends it, together with the user's category
+names, to Gemini with a JSON `responseSchema` → an `ExpenseSink` writes each expense:
+`api.ts` (`ExpenserApi`, used when `EXPENSER_API_KEY` is set) calls `GET /categories` +
+`POST /expenses` with the user's API key; otherwise `expenser.ts` (`ExpenserBot`) logs into the
+real webapp with Playwright and submits the "Add expense" form, waiting for each `POST /expenses`
+→ 201 → `pipeline.ts` moves the image to `processed/` or `failed/` with a sidecar `.json` report.
+`ledger.ts` records every added expense in `ledger.json` (key: date + amount + verbatim merchant
+text + an occurrence counter) and skips matches, because users screenshot growing card statement
+lists ("Tus consumos") that repeat earlier rows.
+
+- Scripts: `start` (watch mode, batched), `once`, `dry-run`, `setup` (`playwright install chromium`).
+- Config: `apps/autofill/.env` (see `.env.example`), loaded by `src/env.ts` via `process.loadEnvFile`.
+- Browser mode saves its login state to `.auth/state.json` and reuses it. `inbox/`, `processed/`, `failed/`,
+  `.auth/` and `ledger.json` are gitignored (receipts are personal data).
+- Browser-mode selectors depend on the webapp markup: the `Amount in ARS` / `Description (optional)` placeholders,
+  the form's `<select>`, the `Add Expense` button, and `#email`/`#password` on `/login`. If you
+  change `ExpenseTracker.tsx` or `LoginForm.tsx`, update `src/expenser.ts` to match.
+
+---
+
 ## Deployment
 
 Both apps run on a single **DigitalOcean droplet**; the database is on **Turso** (hosted libSQL).
@@ -292,7 +336,9 @@ Manual deploys only, no CI/CD. Everything lives in `deploy/`:
 - Backend env vars live in `apps/backend/.env` on the droplet: edit it, then
   `pm2 reload deploy/ecosystem.config.cjs --update-env`.
 - Prisma can't `migrate deploy` against a remote `libsql://` URL, so apply schema changes to Turso as
-  raw SQL: `pnpm --filter @expenser/backend db:turso:sql | turso db shell expenser`.
+  raw SQL. For a new database: `pnpm --filter @expenser/backend db:turso:sql | turso db shell expenser`
+  (full schema from empty). For an existing one, apply only the new migration, e.g.
+  `turso db shell expenser < apps/backend/prisma/migrations/<timestamp>_<name>/migration.sql`.
 - See README "Deployment" for the one-time droplet setup.
 
 ---
@@ -312,6 +358,7 @@ model User {
   sessions                Session[]
   categories              Category[]
   expenses                Expense[]
+  apiKeys                 ApiKey[]
 }
 
 model Session {
@@ -340,14 +387,25 @@ model Expense {
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  name       String
+  prefix     String    // First characters of the key, shown in the UI
+  keyHash    String    @unique // SHA-256 of the full key; the key itself is never stored
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
 ```
 
 **Design notes:**
 - `Expense.category` stores the category name as a string (no foreign key to `Category`). The
   controller resolves `categoryId` → `category.name` at write time. Deleting a category does not
   affect existing expenses.
-- Every `Category`/`Expense`/`Session` row is scoped to a `User` via `userId` with cascade delete —
-  deleting a user wipes their categories, expenses, and sessions.
+- Every `Category`/`Expense`/`Session`/`ApiKey` row is scoped to a `User` via `userId` with cascade delete —
+  deleting a user wipes their categories, expenses, sessions, and API keys.
 
 ---
 
