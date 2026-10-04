@@ -33,7 +33,7 @@ export function ApiKeysSection({ apiKeys, onApiKeyCreated, onApiKeyRevoked }: Pr
     e.preventDefault()
     const name = nameInput.trim()
     if (!name) {
-      setError('Give the key a name, e.g. "Laptop autofill"')
+      setError('Give the key a name, e.g. "Claude"')
       return
     }
     setError('')
@@ -78,7 +78,7 @@ export function ApiKeysSection({ apiKeys, onApiKeyCreated, onApiKeyRevoked }: Pr
       <div>
         <h2 className="font-semibold text-gray-800">API keys</h2>
         <p className="text-xs text-gray-400 mt-0.5">
-          Let scripts like the autofill bot add expenses for you. Send the key as an{' '}
+          Let scripts or assistants like Claude add expenses for you. Send the key as an{' '}
           <code className="text-gray-500">Authorization: Bearer</code> header.
         </p>
       </div>
@@ -120,7 +120,7 @@ export function ApiKeysSection({ apiKeys, onApiKeyCreated, onApiKeyRevoked }: Pr
             setNameInput(e.target.value)
             setError('')
           }}
-          placeholder="Key name, e.g. Laptop autofill"
+          placeholder="Key name, e.g. Claude"
           maxLength={50}
           className="flex-1 min-w-0 border border-gray-200 rounded-xl px-4 py-3 text-base sm:text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />

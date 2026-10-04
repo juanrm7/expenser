@@ -29,7 +29,7 @@ const authPluginAsync: FastifyPluginAsync = async (app) => {
   app.decorateRequest('authMethod', null)
 
   // A session cookie (browser) takes precedence; otherwise accept `Authorization: Bearer <api key>`
-  // (scripts and the local autofill bot).
+  // (scripts, or Claude adding expenses for you).
   app.addHook('preHandler', async (req) => {
     req.user = null
     req.authMethod = null
