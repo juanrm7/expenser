@@ -185,9 +185,18 @@ export function ExpenseTracker({ summary: initialSummary, categories }: Props) {
                   >
                     {expense.category}
                   </span>
-                  <span className="text-sm text-gray-500 truncate">
-                    {expense.description || '—'}
-                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-sm text-gray-500 truncate">
+                      {expense.description || '—'}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(expense.createdAt).toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-sm font-semibold text-gray-800">{formatARS(expense.amount)}</span>
