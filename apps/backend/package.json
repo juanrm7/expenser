@@ -1,35 +1,11 @@
 {
   "name": "@expenser/backend",
-  "type": "module",
+  "private": true,
   "version": "0.0.1",
-  "engines": {
-    "node": ">=22.12.0"
-  },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "test": "tsx --test tests/*.test.ts",
-    "build": "tsup src/server.ts --out-dir dist --format esm",
-    "start": "node dist/server.js",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:turso:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script"
-  },
-  "dependencies": {
-    "@fastify/cookie": "^11.0.2",
-    "@fastify/cors": "^11.2.0",
-    "@libsql/client": "^0.17.3",
-    "@prisma/adapter-libsql": "^6.19.2",
-    "@prisma/client": "^6.5.0",
-    "bcrypt": "^6.0.0",
-    "fastify": "^5.3.2",
-    "fastify-plugin": "^5.1.0"
-  },
-  "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
-    "@types/node": "^22.13.14",
-    "prisma": "^6.5.0",
-    "tsup": "^8.4.0",
-    "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "dev": "cargo run",
+    "build": "cargo build --release --locked",
+    "start": "./target/release/expenser-backend",
+    "test": "cargo test --locked"
   }
 }
