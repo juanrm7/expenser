@@ -56,6 +56,8 @@ A client-side expense tracker that runs entirely in the browser. Data is persist
 - Weekly budget of 100,000 ARS (configurable)
 - Carry-over logic: leftover or overspent balance rolls into the next week
 - Expense categories with color badges (configurable)
+- Browse previous Saturday-to-Friday weeks and return to the current week
+- Add missed expenses and edit or delete expenses in the selected week
 - Settings screen to manage allowance and categories
 
 ### Structure
