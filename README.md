@@ -10,7 +10,7 @@ This is a [Turborepo](https://turbo.build) + [pnpm workspaces](https://pnpm.io/w
 expenser/
 ├── apps/
 │   ├── webapp/          # Astro + React + Tailwind frontend
-│   └── backend/         # Fastify + Prisma + SQLite REST API
+│   └── backend/         # Rust (axum) + libSQL REST API
 ├── deploy/             # Droplet deploy script, pm2 config, nginx server blocks
 ├── package.json         # Root scripts and workspace config
 ├── pnpm-workspace.yaml
@@ -21,6 +21,7 @@ expenser/
 
 - Node.js >= 22.12.0
 - pnpm >= 10
+- Rust (stable, via [rustup](https://rustup.rs)), for the backend
 
 ## Getting Started
 
@@ -95,42 +96,58 @@ apps/webapp/
 
 ## apps/backend
 
-**Stack:** Fastify 5, TypeScript, Prisma 6 — SQLite locally, [Turso](https://turso.tech) (hosted libSQL) in production via the Prisma libSQL driver adapter.
+**Stack:** Rust, [axum](https://github.com/tokio-rs/axum) 0.8 on tokio, [libSQL](https://github.com/tursodatabase/libsql): a SQLite file locally, [Turso](https://turso.tech) (hosted libSQL) in production.
 
-A REST API following a controller/service architecture (similar to NestJS).
+A REST API with one file per feature, holding its routes, handlers, row types and SQL.
 
 ### Structure
 
 ```
 apps/backend/
-├── prisma/
-│   └── schema.prisma      # Prisma schema (SQLite datasource)
+├── migrations/
+│   └── 0001_init.sql   # Schema migrations, applied in order at startup
 ├── src/
-│   ├── lib/
-│   │   └── prisma.ts      # Prisma client singleton
-│   ├── modules/
-│   │   └── health/
-│   │       ├── health.controller.ts   # Route registration
-│   │       └── health.service.ts      # Business logic
-│   ├── app.ts             # Fastify app factory
-│   └── server.ts          # Entry point
-├── .env.example
-├── package.json
-└── tsconfig.json
+│   ├── main.rs         # Entry point: config, database, server, graceful shutdown
+│   ├── lib.rs          # AppState and the router (CORS, correlation ids, request logging)
+│   ├── config.rs       # Environment variables
+│   ├── db.rs           # Connection, migrations, query helpers, timestamp encoding
+│   ├── error.rs        # AppError ({ "message" } error bodies), JsonBody and Id extractors
+│   ├── dates.rs        # Saturday–Friday weeks and months, in the server's time zone
+│   ├── auth.rs         # /auth/* routes, sessions, AuthUser/SessionUser extractors
+│   ├── api_keys.rs     # /api-keys routes, API key authentication
+│   ├── categories.rs   # /categories routes
+│   └── expenses.rs     # /expenses routes, weekly/monthly summary
+├── tests/              # API tests against the real router and a temporary database
+├── Cargo.toml
+└── .env.example
 ```
 
 ### Architecture
 
-Each feature is a **module** with two files:
+- Handlers declare what they need as arguments: `AuthUser` (session cookie or API key, else 401),
+  `SessionUser` (session only; 403 for API keys), `JsonBody<T>`, `Id`, `State<AppState>`.
+- Queries are plain SQL run through the helpers in `db.rs` (`fetch_all`, `fetch_optional`,
+  `fetch_one`, `fetch_value`), which deserialize rows into serde structs by column name. Every
+  query is scoped by the user's id.
+- Errors are `AppError`s: expected ones carry a status and message; anything else is logged and
+  answered with a 500. Every error body is `{ "message": "..." }`.
 
-- **Controller** — registers routes on the `FastifyInstance`
-- **Service** — contains the business logic, called by the controller
+To add a feature, create `src/<name>.rs` with a `routes()` function and merge it in `app()` (`src/lib.rs`).
 
-To add a new module, create `src/modules/<name>/<name>.controller.ts` and `<name>.service.ts`, then register the controller in `src/app.ts` with `app.register(...)`.
+### Database
+
+The schema lives in [`migrations/`](apps/backend/migrations). Pending migrations are applied
+automatically when the server starts, to the local file and to Turso alike, and recorded in the
+`_migrations` table. To change the schema, add the next numbered file (e.g. `0002_add_budgets.sql`)
+and list it in `MIGRATIONS` in `src/db.rs`. Never edit a migration that has already been applied.
+
+`0001_init.sql` is the schema the previous (Prisma) backend created, so existing databases are
+adopted as they are. Timestamps are stored as UTC text in the format Prisma used
+(`2026-10-12T03:00:00.000+00:00`).
 
 ### Environment Variables
 
-Copy `.env.example` to `.env` before running:
+The defaults work for local development. To override them, copy `.env.example` to `.env`:
 
 ```sh
 cp apps/backend/.env.example apps/backend/.env
@@ -138,25 +155,28 @@ cp apps/backend/.env.example apps/backend/.env
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | `file:./dev.db` | SQLite path used by the **Prisma CLI** (migrations/generate) |
-| `TURSO_DATABASE_URL` | `file:./prisma/dev.db` | Runtime DB connection used by the libSQL adapter. In production a `libsql://…turso.io` URL |
+| `TURSO_DATABASE_URL` | `file:./dev.db` | A local SQLite file (created on first start), or in production a `libsql://…turso.io` URL |
 | `TURSO_AUTH_TOKEN` | — | Turso auth token. Required only for remote (`libsql://`) databases |
 | `PORT` | `3001` | Port the server listens on |
 | `HOST` | `0.0.0.0` | Interface to bind. pm2 sets `127.0.0.1` in production so only nginx can reach it |
 | `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL) |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` in production so session cookies require HTTPS |
 | `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. `lax` works for `expenser.*` + `expenser-api.*` (same site); `none` only if they're on different sites |
+| `RUST_LOG` | `info` | Log filter, e.g. `debug` |
+
+Weeks and months follow the server's local time zone (`TZ`).
 
 ### Commands
 
+From `apps/backend` (or `pnpm --filter @expenser/backend <script>` from the root):
+
 | Command | Description |
 | :--- | :--- |
-| `pnpm dev` | Start dev server at `http://localhost:3000` (with watch) |
-| `pnpm build` | Compile to `dist/` |
-| `pnpm start` | Run the compiled build |
-| `pnpm db:generate` | Generate Prisma client |
-| `pnpm db:migrate` | Run database migrations (local dev) |
-| `pnpm db:turso:sql` | Print the full schema as SQL (for applying to Turso) |
+| `pnpm dev` (`cargo run`) | Start the API at `http://localhost:3001` |
+| `pnpm build` | Release build to `target/release/expenser-backend` |
+| `pnpm start` | Run the release build |
+| `pnpm test` (`cargo test`) | Run the unit and API tests |
+| `cargo clippy --all-targets`, `cargo fmt` | Lint, format |
 
 ---
 
@@ -168,13 +188,13 @@ Both apps run on a single **DigitalOcean droplet**, with the database on **Turso
 | Piece | How it runs | URL |
 | :--- | :--- | :--- |
 | Webapp | Static Astro build in `/var/www/expenser`, served by nginx | `https://expenser.juanromerodev.com` |
-| Backend | `node dist/server.js` under **pm2** on `127.0.0.1:3001`, reverse-proxied by nginx | `https://expenser-api.juanromerodev.com` |
+| Backend | Rust release binary under **pm2** on `127.0.0.1:3001`, reverse-proxied by nginx | `https://expenser-api.juanromerodev.com` |
 | Database | Turso DB `expenser` (libSQL) | — |
 
 Everything lives in [`deploy/`](deploy):
 
-- [`deploy/deploy.sh`](deploy/deploy.sh) pulls, installs, builds both apps, `rsync`s the webapp to the web root, and reloads pm2
-- [`deploy/ecosystem.config.cjs`](deploy/ecosystem.config.cjs) is the pm2 process definition (loads `apps/backend/.env`)
+- [`deploy/deploy.sh`](deploy/deploy.sh) pulls, installs, builds both apps, `rsync`s the webapp to the web root, and restarts the backend under pm2
+- [`deploy/ecosystem.config.cjs`](deploy/ecosystem.config.cjs) is the pm2 process definition (the binary loads `apps/backend/.env` itself)
 - [`deploy/nginx/`](deploy/nginx) has one server block per domain
 
 ### One-time droplet setup
@@ -185,6 +205,12 @@ sudo apt update && sudo apt install -y nginx certbot python3-certbot-nginx rsync
 # Node 22+ (e.g. via nvm or NodeSource), then pnpm + pm2
 corepack enable && corepack prepare pnpm@10 --activate
 npm install -g pm2
+# Rust, to build the backend
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+
+# With 1 GB of RAM, add swap: compiling the backend peaks around 0.5 GB per compiler process
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 # Firewall: only SSH + HTTP(S)
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
@@ -240,18 +266,25 @@ ssh <droplet> 'cd ~/expenser && pnpm run deploy'
 (Use `run deploy`, not `deploy`, since bare `pnpm deploy` is a built-in pnpm command.) Set `BRANCH=...`
 to deploy something other than `main`, or `WEB_ROOT=...` for a different nginx root.
 
-To change backend env vars, edit `apps/backend/.env` and run
-`pm2 reload deploy/ecosystem.config.cjs --update-env`. Changing `apps/webapp/.env` requires a
-redeploy, because the values are baked into the build. Logs: `pm2 logs expenser-backend`.
+The first build compiles every dependency and takes a few minutes; later ones only recompile the
+backend itself. Database migrations are applied when the backend starts.
 
-### Apply the schema to Turso
+To change backend env vars, edit `apps/backend/.env` and run `pm2 restart expenser-backend` (the
+binary reads the file at startup). Changing `apps/webapp/.env` requires a redeploy, because the
+values are baked into the build. Logs: `pm2 logs expenser-backend`.
 
-Prisma can't run `migrate deploy` against a remote `libsql://` URL, so apply the schema as raw SQL via the Turso CLI:
+### Switching from the Node backend (one-time)
+
+`pnpm run deploy` runs the deploy script from the current checkout, and the old one can't move pm2
+over to the Rust binary. So for the first deploy of the Rust backend, install Rust (see the setup
+above) and pull before deploying:
 
 ```sh
-pnpm --filter @expenser/backend db:turso:sql > /tmp/init.sql
-turso db shell expenser < /tmp/init.sql
+cd ~/expenser && git pull --ff-only && pnpm run deploy
 ```
+
+The production `.env` needs no changes, and the database is adopted as it is. Afterwards
+`apps/backend/dist/` and `apps/backend/node_modules/` can be deleted.
 
 ### Endpoints
 

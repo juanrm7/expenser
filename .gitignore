@@ -1,5 +1,6 @@
 # build output
 dist/
+target/
 # generated types
 .astro/
 # turborepo cache
@@ -28,6 +29,6 @@ pnpm-debug.log*
 # local editor settings
 .claude/settings.local.json
 
-# prisma
+# local SQLite databases
 *.db
 *.db-journal

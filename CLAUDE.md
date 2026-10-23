@@ -1,16 +1,16 @@
 # Expenser Web App
 
 A weekly/monthly expense tracker for managing personal budgets in Argentine Pesos (ARS), with
-per-user accounts. Full-stack TypeScript monorepo.
+per-user accounts. Monorepo with a TypeScript webapp and a Rust backend.
 
 ## Monorepo Structure
 
-**Package manager:** pnpm >= 10 | **Orchestration:** Turborepo | **Node:** >= 22.12.0
+**Package manager:** pnpm >= 10 | **Orchestration:** Turborepo | **Node:** >= 22.12.0 | **Rust:** stable (rustup)
 
 ```
 expenser/
 ├── apps/
-│   ├── backend/    # Fastify REST API + Prisma + SQLite (libSQL/Turso adapter)
+│   ├── backend/    # Rust REST API: axum + libSQL (SQLite file locally, Turso in production)
 │   └── webapp/     # Astro + React + Tailwind CSS (installable PWA)
 ├── deploy/         # Droplet deploy: deploy.sh, pm2 ecosystem.config.cjs, nginx/ server blocks
 ├── turbo.json
@@ -24,9 +24,7 @@ expenser/
 |---|---|
 | `pnpm dev` | Start both apps in dev mode |
 | `pnpm build` | Build both apps for production |
-| `pnpm --filter @expenser/backend test` | Run expense API regression tests |
-| `pnpm --filter @expenser/backend db:generate` | Generate Prisma Client |
-| `pnpm --filter @expenser/backend db:migrate` | Run DB migrations (local dev) |
+| `pnpm --filter @expenser/backend test` | Run backend tests (`cargo test` in `apps/backend`) |
 | `pnpm --filter @expenser/backend dev` | Backend only (`http://localhost:3001`) |
 | `pnpm --filter @expenser/webapp dev` | Webapp only (`http://localhost:4321`) |
 
@@ -34,92 +32,105 @@ expenser/
 
 ## Backend (`apps/backend`)
 
-**Stack:** Fastify 5, Prisma 6 (libSQL driver adapter), SQLite/Turso, TypeScript 5 (ESM, strict), bcrypt for password hashing
+**Stack:** Rust (edition 2024), axum 0.8 + tokio, tower-http (CORS, request ids, tracing), libSQL
+(`libsql` crate: a local SQLite file or remote Turso), serde, chrono, bcrypt, tracing
 
-- Dev: `tsx watch src/server.ts`
-- Build: `tsup` → `dist/server.js` (ESM)
+- Dev: `cargo run` (what `pnpm dev` runs)
+- Build: `cargo build --release` → `target/release/expenser-backend`
 - Server runs on `http://localhost:3001` (`PORT`/`HOST` env; pm2 binds `127.0.0.1` in production)
+- Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
 
 ### Source structure
 
 ```
+migrations/
+└── 0001_init.sql  # Schema migrations, embedded in the binary and applied in order at startup
 src/
-├── server.ts               # Entry point
-├── app.ts                  # Fastify factory: cors, cookie, correlation/logger/auth plugins, controllers
-├── lib/
-│   ├── env.ts               # process.env reads, centralized (port, webappUrl, cookie settings, databaseUrl)
-│   ├── prisma.ts             # Prisma Client singleton, wired to the libSQL driver adapter
-│   ├── prisma-errors.ts      # isNotFound(err) utility (Prisma P2025)
-│   ├── auth-plugin.ts        # Decorates req.user from the session cookie; exports requireAuth preHandler
-│   ├── correlation-plugin.ts # Reads/generates x-correlation-id, echoes it on the response
-│   └── logger-plugin.ts      # Colored one-line request log; dumps full request/error context on 5xx
-└── modules/
-    ├── health/
-    ├── auth/          # signup/login/logout/me, session cookie issuance
-    ├── categories/    # per-user categories
-    ├── expenses/      # per-user expenses + weekly/monthly summary
-    └── api-keys/      # per-user API keys (create/list/revoke) + key → user lookup
+├── main.rs        # Entry point: loads .env (dotenvy), tracing, config, db, serve + graceful shutdown
+├── lib.rs         # AppState { db, config, clock }; app(): routes + middleware (request id, trace, CORS)
+├── config.rs      # Config::from_env(): every env read, validated at startup
+├── db.rs          # open() (connect + migrate), MIGRATIONS, fetch_all/fetch_optional/fetch_one/fetch_value,
+│                  # timestamp() (DB encoding), to_json/to_json_opt (API encoding of timestamps)
+├── error.rs       # AppError + Result alias; JsonBody<T> and Id extractors
+├── dates.rs       # parse_date, local_date, week_start, month_start, start_of_day (server's local TZ)
+├── auth.rs        # User/Role, AuthUser/SessionUser extractors, sessions, /auth/* handlers
+├── api_keys.rs    # /api-keys handlers; key_user() resolves an API key to its owner
+├── categories.rs  # /categories handlers; find() (also used by expenses)
+└── expenses.rs    # /expenses handlers + the weekly/monthly summary
+tests/
+├── common/mod.rs  # TestApp: the real router over a temp DB, clock fixed, seed helpers
+├── expenses.rs    # Expense + summary regression tests
+└── api.rs         # Auth, sessions, categories, API keys, HTTP plumbing, migrations
 ```
 
-### Module pattern
+### Feature pattern
 
-Each feature module has three files:
+Each feature is one file: its row/body types, a `routes()` function, the handlers and their SQL.
 
-- **`*.controller.ts`** — registers routes on `FastifyInstance`, handles HTTP in/out, delegates to service
-- **`*.service.ts`** — exported class, contains business logic and Prisma queries
-- **`*.types.ts`** — domain interfaces and request/response body types
+```rust
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")] // JSON fields and DB columns are both camelCase
+pub struct Category { pub id: i64, pub name: String, pub color: String, pub user_id: i64 }
 
-```typescript
-// Controller — non-auth modules add requireAuth as a module-wide preHandler hook
-export async function categoriesController(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth)
-  app.get('/categories', async (req) => service.getAll(req.user!.id))
-  app.post<{ Body: CreateCategoryBody }>('/categories', async (req, reply) => {
-    const category = await service.create(req.user!.id, req.body)
-    return reply.status(201).send(category)
-  })
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/categories", get(list).post(create))
+        .route("/categories/{id}", get(show).patch(update).delete(remove))
 }
 
-// Service — every query is scoped by userId
-export class CategoriesService {
-  getAll(userId: number) { return prisma.category.findMany({ where: { userId } }) }
-  create(userId: number, data: CreateCategoryBody) {
-    return prisma.category.create({ data: { ...data, userId } })
-  }
+// Auth is an extractor: AuthUser = session or API key (401 otherwise), SessionUser = session only.
+async fn create(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    JsonBody(body): JsonBody<CreateBody>,
+) -> Result<(StatusCode, Json<Category>)> {
+    let category = db::fetch_one(
+        &state.db,
+        "INSERT INTO Category (name, color, userId) VALUES (?1, ?2, ?3) RETURNING *",
+        params![body.name, body.color, user.id], // every query is scoped by the user's id
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(category)))
 }
 ```
 
-- Controllers return `404` via `reply.status(404).send({ message: '...' })`
-- Use `isNotFound(err)` from `lib/prisma-errors.ts` to detect Prisma P2025 errors
-- All imports use `.js` extension (ESM requirement)
-- Register new controllers in `app.ts` with `app.register(myController)`
-- New modules that store user data should add `app.addHook('preHandler', requireAuth)` and scope
-  every Prisma query by `req.user!.id`
+- Merge a new feature's `routes()` into `app()` in `src/lib.rs`.
+- Errors: return `AppError::bad_request` / `not_found` / `new(status, msg)`; `?` on anything else
+  becomes a logged 500. Every error body is `{ "message": "..." }`, including malformed JSON
+  (`JsonBody`) and non-numeric ids (`Id`, 400 `Invalid id`).
+- Optional body fields are `Option<T>`; PATCH handlers use `SET col = COALESCE(?n, col)` so omitted
+  fields keep their value, and `RETURNING *` to get the row back in the same round trip. "Not
+  found" is a `fetch_optional` returning `None`, or an `execute` that affected 0 rows.
+- Rows deserialize by column name. When joining, alias columns (`User.id AS id`) and embed a
+  `User` with `#[serde(flatten)]`.
+- Time: use `state.now()`, never `Utc::now()`, in handlers, so tests can fix the clock. Bind
+  timestamps with `db::timestamp(t)`; serialize them with `#[serde(serialize_with = "db::to_json")]`.
+- One shared `libsql::Connection` (in `AppState`) serves every request; for Turso it reuses one
+  HTTP connection pool. Use `state.db.transaction()` for multi-statement writes (see signup).
+- Blocking work (bcrypt) goes through `tokio::task::spawn_blocking`.
 
 ### Authentication
 
 Session-based auth using an httpOnly cookie (`session_id`), not JWTs, plus per-user **API keys**
 for scripts (`Authorization: Bearer exp_...`).
 
-- `auth-plugin.ts` runs on every request: reads the cookie, loads the session + user from the DB,
-  and sets `req.user` (`SessionUser | null`) and `req.authMethod` (`'session' | 'apiKey' | null`).
-  With no valid session it falls back to a Bearer API key. Nothing is auto-rejected — routes opt
-  in via `requireAuth`.
-- `requireAuth` (exported from `lib/auth-plugin.ts`) is a `preHandler` that 401s if `req.user` is null.
-  Every module except `health` and the `signup`/`login` routes uses it. It accepts both auth methods.
-- `requireSession` additionally 403s API-key requests. The `api-keys` module uses it, so a leaked
-  key can't create or revoke keys.
+- The `AuthUser` and `SessionUser` extractors (`auth.rs`) read the `session_id` cookie and load the
+  session + user; with no valid session they fall back to a Bearer API key. Nothing is rejected
+  globally: routes opt in by taking one of them as an argument.
+- `AuthUser` 401s without a user and accepts both auth methods. Every route except `/health`,
+  signup, login and the `api-keys` routes takes it.
+- `SessionUser` additionally 403s API-key requests. The `api-keys` routes use it, so a leaked key
+  can't create or revoke keys.
 - API keys: `exp_` + 32 random bytes (base64url). Only a SHA-256 hash (`keyHash`, unique, used for
   lookup) and a display `prefix` are stored; the full key is returned once by `POST /api-keys`.
   Revoking deletes the row. `lastUsedAt` is updated at most once a minute per key. Max 10 per user.
-- Sessions live in the `Session` table (30-day expiry), created on signup/login, deleted on logout
-  or lazily on expiry check.
-- Passwords are hashed with bcrypt (cost 10). Signup validates name/email/password/allowance and
-  seeds 5 starter categories (Food, Transport, Entertainment, Bills, Other) for the new user.
-- Cookie flags (`SESSION_COOKIE_SECURE`, `SESSION_COOKIE_SAMESITE`) come from `lib/env.ts` — set
+- Sessions live in the `Session` table (30-day expiry, cookie `Max-Age` to match), created on
+  signup/login, deleted on logout or lazily when an expired one is used.
+- Passwords are hashed with bcrypt (cost 10, `$2b$`, compatible with the previous Node backend's
+  hashes). Signup validates name/email/password/allowance and seeds 5 starter categories (Food,
+  Transport, Entertainment, Bills, Other) for the new user in the same transaction.
+- Cookie flags (`SESSION_COOKIE_SECURE`, `SESSION_COOKIE_SAMESITE`) come from `Config` — set
   `secure=true` and `sameSite=none` when the API and webapp are on different origins in production.
-- `AuthError` (with an HTTP `status`) is the module's error type; controllers catch it and forward
-  the status/message, otherwise rethrow.
 
 ### API routes
 
@@ -132,24 +143,25 @@ for scripts (`Authorization: Bearer exp_...`).
 | GET | `/auth/me` | required | Current user |
 | PATCH | `/auth/me` | required | Update name / `expendableAmountPerWeek` |
 | GET | `/categories` | required | List categories for the current user |
-| GET | `/categories/:id` | required | Single category |
+| GET | `/categories/{id}` | required | Single category |
 | POST | `/categories` | required | Create category |
-| PATCH | `/categories/:id` | required | Update category |
-| DELETE | `/categories/:id` | required | Delete category (204) |
+| PATCH | `/categories/{id}` | required | Update category |
+| DELETE | `/categories/{id}` | required | Delete category (204) |
 | GET | `/expenses` | required | List all expenses for the current user |
 | GET | `/expenses/summary` | required | Weekly + current-month summary; optional `?weekStart=YYYY-MM-DD` selects a previous Saturday |
-| GET | `/expenses/:id` | required | Single expense |
+| GET | `/expenses/{id}` | required | Single expense |
 | POST | `/expenses` | required | Create expense (body: `{ amount, description, categoryId, date? }`, date is `YYYY-MM-DD`) |
-| PATCH | `/expenses/:id` | required | Update expense |
-| DELETE | `/expenses/:id` | required | Delete expense (204) |
+| PATCH | `/expenses/{id}` | required | Update expense |
+| DELETE | `/expenses/{id}` | required | Delete expense (204) |
 | GET | `/api-keys` | session only | List the user's API keys (name, prefix, lastUsedAt, createdAt) |
 | POST | `/api-keys` | session only | Create a key (body: `{ name }`); response includes the full `key`, shown once |
-| DELETE | `/api-keys/:id` | session only | Revoke a key (204) |
+| DELETE | `/api-keys/{id}` | session only | Revoke a key (204) |
 
 "Required" accepts a session cookie or an API key; "session only" rejects API keys with 403.
 
-**Weekly/monthly summary (`ExpensesService.getWeeklySummary`):**
-- Weeks run **Saturday through Friday** (see `getWeekStart` in `expenses.dates.ts`).
+**Weekly/monthly summary (`summary` in `expenses.rs`):**
+- Weeks run **Saturday through Friday** (see `week_start` in `dates.rs`), in the server's local
+  time zone (`TZ`).
   Optional `weekStart` selects a previous Saturday; future weeks are rejected. Responses include
   `currentWeekStart` and `today`; summary expenses include a calendar `date` for consistent editing
   across browser/server time zones. Queries are bounded by both ends of the selected week.
@@ -165,18 +177,19 @@ for scripts (`Authorization: Bearer exp_...`).
 ### Environment (`.env`, see `.env.example`)
 
 ```
-DATABASE_URL="file:./dev.db"        # Prisma CLI (migrate/generate)
-TURSO_DATABASE_URL="file:./prisma/dev.db"  # Runtime connection (libSQL adapter); libsql://... in prod
+TURSO_DATABASE_URL="file:./dev.db"  # Local SQLite file (created on first start); libsql://... in prod
 TURSO_AUTH_TOKEN=                   # Required only for remote (libsql://) databases
 PORT=3001
 HOST=0.0.0.0                        # pm2 sets 127.0.0.1 in production (behind nginx)
 WEBAPP_URL=http://localhost:4321    # Allowed CORS origin
 SESSION_COOKIE_SECURE=false         # true in production (HTTPS-only cookies)
 SESSION_COOKIE_SAMESITE=lax         # lax in prod too (expenser.* + expenser-api.* are same-site)
+RUST_LOG=info                       # tracing filter (default info)
 ```
 
-`lib/prisma.ts` always goes through the `@prisma/adapter-libsql` driver adapter — locally it points
-at the same SQLite file the Prisma CLI uses; in production it points at a Turso `libsql://` URL.
+All of them are optional locally. `main.rs` loads `apps/backend/.env` with dotenvy; variables already
+set in the environment (e.g. by pm2) win. `db::open` connects through the `libsql` crate: a local
+file for `file:` URLs and plain paths, remote Turso for `libsql://`.
 
 ---
 
@@ -303,94 +316,60 @@ Static build `rsync`ed to `/var/www/expenser` on the droplet and served by nginx
 Both apps run on a single **DigitalOcean droplet**; the database is on **Turso** (hosted libSQL).
 Manual deploys only, no CI/CD. Everything lives in `deploy/`:
 
-- `deploy/deploy.sh` runs on the droplet: `git pull`, `pnpm install`, builds the backend (tsup) and
-  webapp (astro) per-package (not via turbo, whose cache doesn't see the gitignored `.env` files),
-  `rsync`s `apps/webapp/dist/` to `/var/www/expenser`, then `pm2 startOrReload` + `pm2 save`.
-- `deploy/ecosystem.config.cjs`: pm2 app `expenser-backend` runs `apps/backend/dist/server.js`
-  with `node --env-file=.env` (reads `apps/backend/.env`), `HOST=127.0.0.1`.
+- `deploy/deploy.sh` runs on the droplet: `git pull`, `pnpm install`, builds the backend
+  (`cargo build --release` via its package script) and webapp (astro) per-package (not via turbo,
+  whose cache doesn't see the gitignored `.env` files), `rsync`s `apps/webapp/dist/` to
+  `/var/www/expenser`, then `pm2 delete` + `pm2 start` (so pm2 config changes always apply) +
+  `pm2 save`. It puts `~/.cargo/bin` on `PATH` and stops early if cargo is missing.
+- `deploy/ecosystem.config.cjs`: pm2 app `expenser-backend` runs
+  `apps/backend/target/release/expenser-backend` (`interpreter: 'none'`), which reads
+  `apps/backend/.env` itself; `HOST=127.0.0.1`.
 - `deploy/nginx/expenser.conf` serves the static site (`/_astro/` immutable, everything else
   `no-cache` for PWA updates). `deploy/nginx/expenser-api.conf` proxies
   `expenser-api.juanromerodev.com` → `127.0.0.1:3001`. TLS is added by `certbot --nginx`.
 - Redeploy: on the droplet, `cd ~/expenser && pnpm run deploy` (not bare `pnpm deploy`, a pnpm built-in).
 - Backend env vars live in `apps/backend/.env` on the droplet: edit it, then
-  `pm2 reload deploy/ecosystem.config.cjs --update-env`.
-- Prisma can't `migrate deploy` against a remote `libsql://` URL, so apply schema changes to Turso as
-  raw SQL. For a new database: `pnpm --filter @expenser/backend db:turso:sql | turso db shell expenser`
-  (full schema from empty). For an existing one, apply only the new migration, e.g.
-  `turso db shell expenser < apps/backend/prisma/migrations/<timestamp>_<name>/migration.sql`.
-- See README "Deployment" for the one-time droplet setup.
+  `pm2 restart expenser-backend`.
+- Schema changes: add `apps/backend/migrations/000N_<name>.sql` and list it in `MIGRATIONS`
+  (`src/db.rs`). The backend applies pending migrations at startup, locally and on Turso alike,
+  and records them in `_migrations`. Never edit a migration that has been applied.
+- See README "Deployment" for the one-time droplet setup (including Rust and swap).
 
 ---
 
 ## Database Schema
 
-```prisma
-model User {
-  id                      Int        @id @default(autoincrement())
-  name                    String
-  email                   String     @unique
-  passwordHash            String
-  expendableAmountPerWeek Float
-  role                    String     @default("user")
-  createdAt               DateTime   @default(now())
-  updatedAt               DateTime   @updatedAt
-  sessions                Session[]
-  categories              Category[]
-  expenses                Expense[]
-  apiKeys                 ApiKey[]
-}
+Source of truth: `apps/backend/migrations/` (`0001_init.sql` is the schema the previous Prisma
+backend created; quoted camelCase identifiers).
 
-model Session {
-  id        String   @id
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-}
-
-model Category {
-  id     Int    @id @default(autoincrement())
-  name   String
-  color  String
-  userId Int
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Expense {
-  id          Int      @id @default(autoincrement())
-  description String
-  amount      Float
-  category    String   // Denormalized: stores name, not a FK
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  userId      Int
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model ApiKey {
-  id         Int       @id @default(autoincrement())
-  name       String
-  prefix     String    // First characters of the key, shown in the UI
-  keyHash    String    @unique // SHA-256 of the full key; the key itself is never stored
-  lastUsedAt DateTime?
-  createdAt  DateTime  @default(now())
-  userId     Int
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
+```
+User     (id PK, name, email UNIQUE, passwordHash, expendableAmountPerWeek REAL,
+          role DEFAULT 'user', createdAt, updatedAt)
+Session  (id TEXT PK, userId → User, expiresAt, createdAt)
+Category (id PK, name, color, userId → User)
+Expense  (id PK, description, amount REAL, category TEXT, createdAt, updatedAt, userId → User)
+ApiKey   (id PK, name, prefix, keyHash UNIQUE, lastUsedAt NULL, createdAt, userId → User)
 ```
 
 **Design notes:**
+- Timestamps are UTC `TEXT` in a fixed-width format, `2026-10-12T03:00:00.000+00:00` (what Prisma
+  wrote), so range queries compare them as strings: always write them with `db::timestamp()`. The
+  API returns them as `2026-10-12T03:00:00.000Z`.
 - `Expense.category` stores the category name as a string (no foreign key to `Category`). The
-  controller resolves `categoryId` → `category.name` at write time. Deleting a category does not
+  handler resolves `categoryId` → `category.name` at write time. Deleting a category does not
   affect existing expenses.
-- Every `Category`/`Expense`/`Session`/`ApiKey` row is scoped to a `User` via `userId` with cascade delete —
-  deleting a user wipes their categories, expenses, sessions, and API keys.
+- `Expense.createdAt` is when the expense happened: now by default, or the start of the local day
+  given as `date`.
+- Every `Category`/`Expense`/`Session`/`ApiKey` row is scoped to a `User` via `userId` with
+  `ON DELETE CASCADE`.
 
 ---
 
-## TypeScript
+## Conventions
 
-- **Strict mode** in both apps
-- Backend: `target: ES2022`, `module: ESNext`, `moduleResolution: bundler`
-- Webapp: extends `astro/tsconfigs/strict`, `jsx: react-jsx` (no explicit React import needed)
-- Use `type` imports where possible (`import type { ... }`)
+- **Rust (backend):** edition 2024, default `rustfmt`, clippy clean with `-D warnings`. `anyhow`
+  (with `.context(...)`) for internal errors, `AppError` at the HTTP boundary; no `unwrap()` in
+  request paths. Integration tests go in `tests/`, unit tests in a `#[cfg(test)] mod tests` beside
+  the code.
+- **TypeScript (webapp):** strict mode, extends `astro/tsconfigs/strict`, `jsx: react-jsx` (no
+  explicit React import needed). Use `type` imports where possible (`import type { ... }`).
