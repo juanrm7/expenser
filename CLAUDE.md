@@ -24,6 +24,7 @@ expenser/
 |---|---|
 | `pnpm dev` | Start both apps in dev mode |
 | `pnpm build` | Build both apps for production |
+| `pnpm --filter @expenser/backend test` | Run expense API regression tests |
 | `pnpm --filter @expenser/backend db:generate` | Generate Prisma Client |
 | `pnpm --filter @expenser/backend db:migrate` | Run DB migrations (local dev) |
 | `pnpm --filter @expenser/backend dev` | Backend only (`http://localhost:3001`) |
@@ -136,9 +137,9 @@ for scripts (`Authorization: Bearer exp_...`).
 | PATCH | `/categories/:id` | required | Update category |
 | DELETE | `/categories/:id` | required | Delete category (204) |
 | GET | `/expenses` | required | List all expenses for the current user |
-| GET | `/expenses/summary` | required | Weekly + monthly summary (allowance, spent, available, expenses) |
+| GET | `/expenses/summary` | required | Weekly + current-month summary; optional `?weekStart=YYYY-MM-DD` selects a previous Saturday |
 | GET | `/expenses/:id` | required | Single expense |
-| POST | `/expenses` | required | Create expense (body: `{ amount, description, categoryId }`) |
+| POST | `/expenses` | required | Create expense (body: `{ amount, description, categoryId, date? }`, date is `YYYY-MM-DD`) |
 | PATCH | `/expenses/:id` | required | Update expense |
 | DELETE | `/expenses/:id` | required | Delete expense (204) |
 | GET | `/api-keys` | session only | List the user's API keys (name, prefix, lastUsedAt, createdAt) |
@@ -148,8 +149,14 @@ for scripts (`Authorization: Bearer exp_...`).
 "Required" accepts a session cookie or an API key; "session only" rejects API keys with 403.
 
 **Weekly/monthly summary (`ExpensesService.getWeeklySummary`):**
-- The week "starts" on the most recent **Saturday** (see `getCurrentWeekStart` in
-  `expenses.service.ts`) — not Monday.
+- Weeks run **Saturday through Friday** (see `getWeekStart` in `expenses.dates.ts`).
+  Optional `weekStart` selects a previous Saturday; future weeks are rejected. Responses include
+  `currentWeekStart` and `today`; summary expenses include a calendar `date` for consistent editing
+  across browser/server time zones. Queries are bounded by both ends of the selected week.
+- The home screen supports previous/next-week navigation and adding, editing or deleting expenses
+  in the selected week. Optional `date` on POST/PATCH sets `createdAt` (the existing expense date);
+  omitting it preserves the current-time default on creation and the original date on updates.
+  Dates must be valid calendar dates on or before today. Saved categories can be kept even if deleted.
 - The allowance is **per-user**: `User.expendableAmountPerWeek`, set at signup and editable via
   `PATCH /auth/me`. There is no hardcoded global allowance.
 - The response also includes a `monthly` block (calendar month to date): allowance is derived as

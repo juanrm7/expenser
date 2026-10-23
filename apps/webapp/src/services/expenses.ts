@@ -5,8 +5,8 @@ export interface Expense {
   description: string
   amount: number
   category: string
-  createdAt: Date
-  updatedAt: Date
+  createdAt: string
+  updatedAt: string
 }
 
 export interface MonthlySummary {
@@ -16,12 +16,18 @@ export interface MonthlySummary {
   available: number
 }
 
+export interface WeeklyExpense extends Expense {
+  date: string
+}
+
 export interface ExpenseSummary {
   weekStart: string
+  currentWeekStart: string
+  today: string
   allowance: number
   spent: number
   available: number
-  expenses: Expense[]
+  expenses: WeeklyExpense[]
   monthly: MonthlySummary
 }
 
@@ -30,8 +36,10 @@ export async function getExpenses(): Promise<Expense[]> {
   return response.json()
 }
 
-export async function getExpenseSummary(): Promise<ExpenseSummary> {
-  const response = await apiFetch('/expenses/summary')
+export async function getExpenseSummary(weekStart?: string): Promise<ExpenseSummary> {
+  const query = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ''
+  const response = await apiFetch(`/expenses/summary${query}`)
+  if (!response.ok) throw new Error('Failed to load expenses')
   return response.json()
 }
 
@@ -40,16 +48,29 @@ export async function deleteExpense(id: number): Promise<void> {
   if (!response.ok) throw new Error('Failed to delete expense')
 }
 
-export async function createExpense(payload: {
+export interface ExpensePayload {
   amount: number
   description: string
   categoryId: number
-}): Promise<Expense> {
+  date?: string
+}
+
+export async function createExpense(payload: ExpensePayload): Promise<Expense> {
   const response = await apiFetch('/expenses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error('Failed to create expense')
+  return response.json()
+}
+
+export async function updateExpense(id: number, payload: Partial<ExpensePayload>): Promise<Expense> {
+  const response = await apiFetch(`/expenses/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error('Failed to update expense')
   return response.json()
 }

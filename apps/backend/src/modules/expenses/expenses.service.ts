@@ -1,16 +1,7 @@
 import prisma from '../../lib/prisma.js'
 import type { CreateExpenseBody, UpdateExpenseBody } from './expenses.types.js'
 import type { SessionUser } from '../auth/auth.types.js'
-
-function getCurrentWeekStart(): Date {
-  const now = new Date()
-  const day = now.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
-  const diff = day === 6 ? 0 : -(day + 1) // roll back to most recent Saturday
-  const saturday = new Date(now)
-  saturday.setDate(now.getDate() + diff)
-  saturday.setHours(0, 0, 0, 0)
-  return saturday
-}
+import { formatDate, getWeekStart } from './expenses.dates.js'
 
 function getCurrentMonthRange(): { start: Date; end: Date; days: number } {
   const now = new Date()
@@ -28,13 +19,14 @@ export class ExpensesService {
     })
   }
 
-  async getWeeklySummary(user: SessionUser) {
-    const weekStart = getCurrentWeekStart()
+  async getWeeklySummary(user: SessionUser, weekStart = getWeekStart()) {
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 7)
     const month = getCurrentMonthRange()
 
     const [expenses, monthlyAgg] = await Promise.all([
       prisma.expense.findMany({
-        where: { userId: user.id, createdAt: { gte: weekStart } },
+        where: { userId: user.id, createdAt: { gte: weekStart, lt: weekEnd } },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.expense.aggregate({
@@ -50,13 +42,15 @@ export class ExpensesService {
     const monthlyAllowance = (allowance / 7) * month.days
 
     return {
-      weekStart: weekStart.toISOString().split('T')[0],
+      weekStart: formatDate(weekStart),
+      currentWeekStart: formatDate(getWeekStart()),
+      today: formatDate(new Date()),
       allowance,
       spent,
       available: allowance - spent,
-      expenses,
+      expenses: expenses.map(expense => ({ ...expense, date: formatDate(expense.createdAt) })),
       monthly: {
-        monthStart: month.start.toISOString().split('T')[0],
+        monthStart: formatDate(month.start),
         allowance: monthlyAllowance,
         spent: monthlySpent,
         available: monthlyAllowance - monthlySpent,
