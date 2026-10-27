@@ -60,6 +60,7 @@ A client-side expense tracker that runs entirely in the browser. Data is persist
 - Browse previous Saturday-to-Friday weeks and return to the current week
 - Add missed expenses and edit or delete expenses in the selected week
 - Settings screen to manage allowance and categories
+- Connect Claude (Settings → Connected apps) to read and manage expenses by chatting
 
 ### Structure
 
@@ -105,7 +106,8 @@ A REST API with one file per feature, holding its routes, handlers, row types an
 ```
 apps/backend/
 ├── migrations/
-│   └── 0001_init.sql   # Schema migrations, applied in order at startup
+│   ├── 0001_init.sql   # Schema migrations, applied in order at startup
+│   └── 0002_oauth.sql  # OAuth clients, codes and grants
 ├── src/
 │   ├── main.rs         # Entry point: config, database, server, graceful shutdown
 │   ├── lib.rs          # AppState and the router (CORS, correlation ids, request logging)
@@ -115,9 +117,11 @@ apps/backend/
 │   ├── dates.rs        # Saturday–Friday weeks and months, in the server's time zone
 │   ├── auth.rs         # /auth/* routes, sessions, AuthUser/SessionUser extractors
 │   ├── api_keys.rs     # /api-keys routes, API key authentication
+│   ├── tokens.rs       # Random secrets (API keys, OAuth tokens) and their stored hashes
 │   ├── categories.rs   # /categories routes
 │   ├── expenses.rs     # /expenses routes, weekly/monthly summary
-│   └── mcp.rs          # /mcp: MCP server for AI assistants such as Claude
+│   ├── mcp.rs          # /mcp: MCP server for AI assistants such as Claude
+│   └── oauth.rs        # OAuth for /mcp: discovery, registration, consent, tokens, connections
 ├── tests/              # API tests against the real router and a temporary database
 ├── Cargo.toml
 └── .env.example
@@ -142,9 +146,8 @@ To add a feature, create `src/<name>.rs` with a `routes()` function and merge it
 
 `/mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so AI assistants such
 as Claude can read and manage your expenses. It speaks MCP's Streamable HTTP transport through the
-official [`rmcp`](https://crates.io/crates/rmcp) SDK, without sessions, and authenticates with an
-API key: create one in the webapp's settings (a dedicated one, e.g. "Claude", so you can revoke it
-on its own).
+official [`rmcp`](https://crates.io/crates/rmcp) SDK, without sessions. Clients sign in with OAuth,
+or send an API key.
 
 | Tool | Description |
 | :--- | :--- |
@@ -154,15 +157,27 @@ on its own).
 | `list_categories`, `add_category`, `update_category`, `delete_category` | |
 | `get_profile`, `update_profile` | Name and weekly allowance |
 
-To use it from [Claude Code](https://code.claude.com):
+**Claude apps (web, desktop, mobile):** in Claude, go to **Customize → Connectors → Add custom
+connector** and enter `https://expenser-api.juanromerodev.com/mcp`. If it asks how Claude should
+register, choose **Register automatically**. Claude then opens Expenser, where you log in and
+approve the connection. It appears under **Settings → Connected apps**, where you can disconnect it.
+
+**[Claude Code](https://code.claude.com):** the same OAuth sign-in, through your browser:
 
 ```sh
-claude mcp add --transport http expenser https://expenser-api.juanromerodev.com/mcp \
-  --header "Authorization: Bearer exp_..."
+claude mcp add --transport http expenser https://expenser-api.juanromerodev.com/mcp
+claude mcp login expenser
 ```
 
-(`http://localhost:3001/mcp` locally.) Adding it as a custom connector in the Claude apps (web,
-desktop, mobile) needs OAuth, which the server doesn't support yet.
+Or skip OAuth with an API key from Settings (`--header "Authorization: Bearer exp_..."`). Locally,
+the URL is `http://localhost:3001/mcp`.
+
+The OAuth side (`oauth.rs`) follows what Claude expects of a remote MCP server: protected resource
+and authorization server metadata under `/.well-known/`, dynamic client registration, the
+authorization code flow with PKCE (S256), and rotating refresh tokens. `/oauth/authorize` forwards
+valid requests to the webapp's `/authorize` page, where the logged-in user approves or denies them.
+Access tokens (`exa_…`, 1 hour) only work on `/mcp`; refresh tokens (`exr_…`) last 90 days from
+their last use.
 
 ### Database
 
@@ -189,7 +204,8 @@ cp apps/backend/.env.example apps/backend/.env
 | `TURSO_AUTH_TOKEN` | — | Turso auth token. Required only for remote (`libsql://`) databases |
 | `PORT` | `3001` | Port the server listens on |
 | `HOST` | `0.0.0.0` | Interface to bind. pm2 sets `127.0.0.1` in production so only nginx can reach it |
-| `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL) |
+| `API_URL` | `http://localhost:<PORT>` | The API's public URL: the OAuth issuer and the base of the MCP server's URL. Set it in production |
+| `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL), and where OAuth consent happens |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` in production so session cookies require HTTPS |
 | `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. `lax` works for `expenser.*` + `expenser-api.*` (same site); `none` only if they're on different sites |
 | `RUST_LOG` | `info` | Log filter, e.g. `debug`. `rmcp` (the MCP SDK) stays at `warn` unless named, e.g. `info,rmcp=info` |
@@ -260,6 +276,7 @@ Production `apps/backend/.env`:
 TURSO_DATABASE_URL=libsql://<db>-<org>.turso.io
 TURSO_AUTH_TOKEN=<turso db tokens create expenser>
 PORT=3001
+API_URL=https://expenser-api.juanromerodev.com
 WEBAPP_URL=https://expenser.juanromerodev.com
 SESSION_COOKIE_SECURE=true
 SESSION_COOKIE_SAMESITE=lax

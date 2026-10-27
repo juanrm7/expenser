@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCurrentUser, type AuthUser } from '../services/auth'
 import { clearCache, readUserCache, writeUserCache } from './cache'
+import { loginUrl } from './next'
 
 interface UseAuthState {
   user: AuthUser | null
@@ -23,7 +24,7 @@ export function useAuth(): UseAuthState {
         if (cancelled) return
         if (!user) {
           clearCache()
-          window.location.href = '/login'
+          window.location.href = loginUrl()
           return
         }
         writeUserCache(user)
@@ -32,7 +33,7 @@ export function useAuth(): UseAuthState {
         if (cancelled) return
         // Network error: keep showing the cached user if we have one,
         // otherwise there's nothing to show — send them to login.
-        if (!readUserCache()) window.location.href = '/login'
+        if (!readUserCache()) window.location.href = loginUrl()
       }
     }
 

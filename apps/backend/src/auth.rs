@@ -25,7 +25,7 @@ const BCRYPT_COST: u32 = 10;
 const MIN_PASSWORD_LENGTH: usize = 8;
 
 /// The columns of a [`User`], for queries that join it.
-const USER_COLUMNS: &str = "User.id AS id, User.name AS name, User.email AS email,
+pub const USER_COLUMNS: &str = "User.id AS id, User.name AS name, User.email AS email,
     User.expendableAmountPerWeek AS expendableAmountPerWeek, User.role AS role";
 
 /// Every new account starts with these categories.
@@ -109,7 +109,8 @@ pub async fn api_key_user(headers: &HeaderMap, state: &AppState) -> Result<Optio
     }
 }
 
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+/// The token of an `Authorization: Bearer <token>` header.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let (scheme, token) = headers.get(AUTHORIZATION)?.to_str().ok()?.split_once(' ')?;
     let token = token.trim();
     (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)

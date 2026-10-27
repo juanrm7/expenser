@@ -65,6 +65,7 @@ pub async fn spawn() -> TestApp {
     let config = Config {
         host: "127.0.0.1".into(),
         port: 0,
+        api_url: "https://api.example.com".into(),
         webapp_url: HeaderValue::from_static("http://localhost:4321"),
         cookie_secure: false,
         cookie_same_site: SameSite::Lax,
@@ -165,8 +166,24 @@ impl TestApp {
                 .body(Body::from(body.to_string())),
             None => request.body(Body::empty()),
         };
+        self.send(request.unwrap()).await
+    }
 
-        let response = self.router.clone().oneshot(request.unwrap()).await.unwrap();
+    /// POSTs an `application/x-www-form-urlencoded` body, as OAuth clients do.
+    pub async fn post_form(&self, uri: &str, form: &[(&str, &str)]) -> TestResponse {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish();
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body));
+        self.send(request.unwrap()).await
+    }
+
+    async fn send(&self, request: Request<Body>) -> TestResponse {
+        let response = self.router.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();

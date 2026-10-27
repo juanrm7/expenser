@@ -1,9 +1,10 @@
 //! The MCP server at `/mcp`, through which AI assistants such as Claude read and manage the user's
 //! expenses, categories and allowance.
 //!
-//! Clients authenticate with an API key (`Authorization: Bearer exp_…`); session cookies aren't
-//! accepted, so a web page can't make a logged-in browser call it. There are no MCP sessions: each
-//! request is served on its own, by a [`Server`] for the key's owner.
+//! Clients authenticate with an `Authorization: Bearer` OAuth access token (the Claude apps, see
+//! `oauth`) or API key (`exp_…`, e.g. Claude Code). Session cookies aren't accepted, so a web page
+//! can't make a logged-in browser call it. There are no MCP sessions: each request is served on its
+//! own, by a [`Server`] for the token's owner.
 
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use tower::ServiceExt;
 use crate::auth::{self, User};
 use crate::error::{AppError, Result};
 use crate::expenses::{DatedExpense, Expense};
-use crate::{AppState, categories, dates, db, expenses};
+use crate::{AppState, categories, dates, db, expenses, oauth};
 
 const INSTRUCTIONS: &str = "Expenser tracks the user's spending in Argentine pesos (ARS) against \
 a weekly allowance. Weeks run Saturday through Friday; the monthly allowance is the weekly one \
@@ -44,8 +45,18 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn serve(State(state): State<AppState>, request: Request) -> Result<Response> {
-    let Some(user) = auth::api_key_user(request.headers(), &state).await? else {
-        return Ok(([(WWW_AUTHENTICATE, "Bearer")], AppError::unauthorized()).into_response());
+    let headers = request.headers();
+    let user = match oauth::access_token_user(headers, &state).await? {
+        Some(user) => Some(user),
+        None => auth::api_key_user(headers, &state).await?,
+    };
+    let Some(user) = user else {
+        // Tells OAuth clients where to find out how to get a token (RFC 9728).
+        let challenge = format!(
+            "Bearer resource_metadata=\"{}\"",
+            oauth::resource_metadata_url(&state)
+        );
+        return Ok(([(WWW_AUTHENTICATE, challenge)], AppError::unauthorized()).into_response());
     };
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)

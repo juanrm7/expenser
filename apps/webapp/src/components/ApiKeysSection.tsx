@@ -1,25 +1,12 @@
 import { useState } from 'react'
 import { Check, Copy, KeyRound, Trash2 } from 'lucide-react'
+import { instantLabel, lastUsedLabel } from '../lib/dates'
 import { createApiKey, revokeApiKey, type ApiKey, type CreatedApiKey } from '../services/apiKeys'
 
 interface Props {
   apiKeys: ApiKey[]
   onApiKeyCreated: (apiKey: ApiKey) => void
   onApiKeyRevoked: (id: number) => void
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function formatLastUsed(iso: string | null): string {
-  if (!iso) return 'Never used'
-  const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (minutes < 1) return 'Used just now'
-  if (minutes < 60) return `Used ${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `Used ${hours}h ago`
-  return `Used ${formatDate(iso)}`
 }
 
 export function ApiKeysSection({ apiKeys, onApiKeyCreated, onApiKeyRevoked }: Props) {
@@ -142,9 +129,9 @@ export function ApiKeysSection({ apiKeys, onApiKeyCreated, onApiKeyRevoked }: Pr
               <div className="min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">{apiKey.name}</p>
                 <p className="text-xs text-gray-400">
-                  <code>{apiKey.prefix}…</code> · {formatLastUsed(apiKey.lastUsedAt)}
+                  <code>{apiKey.prefix}…</code> · {lastUsedLabel(apiKey.lastUsedAt)}
                 </p>
-                <p className="text-xs text-gray-400">Created {formatDate(apiKey.createdAt)}</p>
+                <p className="text-xs text-gray-400">Created {instantLabel(apiKey.createdAt)}</p>
               </div>
             </div>
             <button

@@ -1,22 +1,18 @@
 //! Per-user API keys for scripts: `Authorization: Bearer exp_…`.
 //!
-//! Only a SHA-256 hash of each key is stored (keys are 256 random bits, so a fast hash is enough,
-//! and it lets a key be looked up by its hash); the key itself is returned once, on creation.
+//! Only a hash of each key is stored (see `tokens`); the key itself is returned once, on creation.
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, TimeDelta, Utc};
 use libsql::params;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::auth::{SessionUser, User};
 use crate::error::{AppError, Id, JsonBody, Result};
-use crate::{AppState, db};
+use crate::{AppState, db, tokens};
 
 const KEY_PREFIX: &str = "exp_";
 /// "exp_" plus 8 characters: enough to tell keys apart in the UI.
@@ -99,9 +95,7 @@ async fn create(
         )));
     }
 
-    let mut random = [0u8; 32];
-    getrandom::fill(&mut random)?;
-    let key = format!("{KEY_PREFIX}{}", URL_SAFE_NO_PAD.encode(random));
+    let key = tokens::generate(KEY_PREFIX)?;
 
     let api_key = db::fetch_one(
         &state.db,
@@ -110,7 +104,7 @@ async fn create(
         params![
             name,
             &key[..DISPLAY_PREFIX_LENGTH],
-            hash_key(&key),
+            tokens::hash(&key),
             db::timestamp(state.now()),
             user.id
         ],
@@ -156,7 +150,7 @@ pub async fn key_user(state: &AppState, key: &str) -> Result<Option<User>> {
         "SELECT ApiKey.id AS keyId, ApiKey.lastUsedAt AS lastUsedAt, User.id AS id, User.name AS name,
             User.email AS email, User.expendableAmountPerWeek AS expendableAmountPerWeek, User.role AS role
          FROM ApiKey JOIN User ON User.id = ApiKey.userId WHERE ApiKey.keyHash = ?1",
-        [hash_key(key)],
+        [tokens::hash(key)],
     )
     .await?
     else {
@@ -177,8 +171,4 @@ pub async fn key_user(state: &AppState, key: &str) -> Result<Option<User>> {
             .await?;
     }
     Ok(Some(owner.user))
-}
-
-fn hash_key(key: &str) -> String {
-    hex::encode(Sha256::digest(key))
 }
