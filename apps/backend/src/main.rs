@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -15,9 +16,15 @@ async fn main() -> anyhow::Result<()> {
     {
         return Err(err).context("failed to load .env");
     }
+    // rmcp logs every MCP request's lifecycle at info. RUST_LOG's directives come last, so they win:
+    // `RUST_LOG=rmcp=info` shows it again.
+    let directives = format!(
+        "info,rmcp=warn,{}",
+        env::var("RUST_LOG").unwrap_or_default()
+    );
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_new(directives).unwrap_or_else(|_| EnvFilter::new("info,rmcp=warn")),
         )
         .init();
 

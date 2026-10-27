@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, Days, Months, NaiveDate, Utc, Weekday};
 use libsql::params;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, User};
 use crate::error::{AppError, Id, JsonBody, Result};
 use crate::{AppState, categories, dates, db};
 
@@ -76,23 +76,32 @@ struct SummaryQuery {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Summary {
+pub struct Summary {
     week_start: NaiveDate,
     current_week_start: NaiveDate,
     today: NaiveDate,
     allowance: f64,
     spent: f64,
     available: f64,
-    expenses: Vec<WeekExpense>,
+    expenses: Vec<DatedExpense>,
     monthly: MonthlySummary,
 }
 
 #[derive(Serialize)]
-struct WeekExpense {
+pub struct DatedExpense {
     #[serde(flatten)]
     expense: Expense,
     /// The local calendar date, so clients in other time zones show and edit the same day.
     date: NaiveDate,
+}
+
+impl From<Expense> for DatedExpense {
+    fn from(expense: Expense) -> Self {
+        Self {
+            date: dates::local_date(expense.created_at),
+            expense,
+        }
+    }
 }
 
 /// The current calendar month to date.
@@ -110,11 +119,18 @@ async fn summary(
     AuthUser(user): AuthUser,
     Query(query): Query<SummaryQuery>,
 ) -> Result<Json<Summary>> {
+    let summary = summarize(&state, &user, query.week_start.as_deref()).await?;
+    Ok(Json(summary))
+}
+
+/// The balance of the week starting on `week_start` (a Saturday, `YYYY-MM-DD`; the current week if
+/// `None`), and of the current month to date.
+pub async fn summarize(state: &AppState, user: &User, week_start: Option<&str>) -> Result<Summary> {
     let today = dates::local_date(state.now());
     let current_week_start = dates::week_start(today);
-    let week_start = match query.week_start {
+    let week_start = match week_start {
         None => current_week_start,
-        Some(value) => match dates::parse_date(&value) {
+        Some(value) => match dates::parse_date(value) {
             Some(date) if date.weekday() == Weekday::Sat && date <= current_week_start => date,
             _ => {
                 return Err(AppError::bad_request(
@@ -155,37 +171,31 @@ async fn summary(
     let days_in_month = (next_month_start - month_start).num_days() as f64;
     let monthly_allowance = allowance / 7.0 * days_in_month;
 
-    Ok(Json(Summary {
+    Ok(Summary {
         week_start,
         current_week_start,
         today,
         allowance,
         spent,
         available: allowance - spent,
-        expenses: expenses
-            .into_iter()
-            .map(|expense| WeekExpense {
-                date: dates::local_date(expense.created_at),
-                expense,
-            })
-            .collect(),
+        expenses: expenses.into_iter().map(DatedExpense::from).collect(),
         monthly: MonthlySummary {
             month_start,
             allowance: monthly_allowance,
             spent: monthly_spent,
             available: monthly_allowance - monthly_spent,
         },
-    }))
+    })
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateBody {
-    amount: f64,
-    description: String,
-    category_id: i64,
+pub struct CreateBody {
+    pub amount: f64,
+    pub description: String,
+    pub category_id: i64,
     /// `YYYY-MM-DD`, on or before today; the expense is recorded as happening now if omitted.
-    date: Option<String>,
+    pub date: Option<String>,
 }
 
 async fn create(
@@ -193,6 +203,11 @@ async fn create(
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<Expense>)> {
+    let expense = add(&state, &user, body).await?;
+    Ok((StatusCode::CREATED, Json(expense)))
+}
+
+pub async fn add(state: &AppState, user: &User, body: CreateBody) -> Result<Expense> {
     let now = state.now();
     check_amount(body.amount)?;
     let created_at = match &body.date {
@@ -217,18 +232,18 @@ async fn create(
         ],
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(expense)))
+    Ok(expense)
 }
 
 /// Omitted fields keep their value: an expense whose category was deleted keeps its name, and one
 /// without a new `date` keeps its original one.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateBody {
-    amount: Option<f64>,
-    description: Option<String>,
-    category_id: Option<i64>,
-    date: Option<String>,
+pub struct UpdateBody {
+    pub amount: Option<f64>,
+    pub description: Option<String>,
+    pub category_id: Option<i64>,
+    pub date: Option<String>,
 }
 
 async fn update(
@@ -237,6 +252,11 @@ async fn update(
     Id(id): Id,
     JsonBody(body): JsonBody<UpdateBody>,
 ) -> Result<Json<Expense>> {
+    let expense = edit(&state, &user, id, body).await?;
+    Ok(Json(expense))
+}
+
+pub async fn edit(state: &AppState, user: &User, id: i64, body: UpdateBody) -> Result<Expense> {
     if body.amount.is_none()
         && body.description.is_none()
         && body.category_id.is_none()
@@ -284,7 +304,7 @@ async fn update(
     )
     .await?
     .ok_or_else(not_found)?;
-    Ok(Json(expense))
+    Ok(expense)
 }
 
 async fn remove(
@@ -292,17 +312,20 @@ async fn remove(
     AuthUser(user): AuthUser,
     Id(id): Id,
 ) -> Result<StatusCode> {
-    let deleted = state
-        .db
-        .execute(
-            "DELETE FROM Expense WHERE id = ?1 AND userId = ?2",
-            [id, user.id],
-        )
-        .await?;
-    if deleted == 0 {
-        return Err(not_found());
-    }
+    delete(&state, &user, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes an expense, returning it.
+pub async fn delete(state: &AppState, user: &User, id: i64) -> Result<Expense> {
+    let expense = db::fetch_optional(
+        &state.db,
+        "DELETE FROM Expense WHERE id = ?1 AND userId = ?2 RETURNING *",
+        [id, user.id],
+    )
+    .await?
+    .ok_or_else(not_found)?;
+    Ok(expense)
 }
 
 fn check_amount(amount: f64) -> Result<()> {

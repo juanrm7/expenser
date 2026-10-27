@@ -26,6 +26,17 @@ pub fn routes() -> Router<AppState> {
         .route("/categories/{id}", get(show).patch(update).delete(remove))
 }
 
+/// The user's categories, oldest first.
+pub async fn all(conn: &Connection, user_id: i64) -> Result<Vec<Category>> {
+    let categories = db::fetch_all(
+        conn,
+        "SELECT * FROM Category WHERE userId = ?1 ORDER BY id",
+        [user_id],
+    )
+    .await?;
+    Ok(categories)
+}
+
 /// The user's category with this id, if there is one.
 pub async fn find(conn: &Connection, user_id: i64, id: i64) -> Result<Option<Category>> {
     let category = db::fetch_optional(
@@ -45,13 +56,7 @@ async fn list(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
 ) -> Result<Json<Vec<Category>>> {
-    let categories = db::fetch_all(
-        &state.db,
-        "SELECT * FROM Category WHERE userId = ?1 ORDER BY id",
-        [user.id],
-    )
-    .await?;
-    Ok(Json(categories))
+    Ok(Json(all(&state.db, user.id).await?))
 }
 
 async fn show(
@@ -64,9 +69,9 @@ async fn show(
 }
 
 #[derive(Deserialize)]
-struct CreateBody {
-    name: String,
-    color: String,
+pub struct CreateBody {
+    pub name: String,
+    pub color: String,
 }
 
 async fn create(
@@ -74,19 +79,24 @@ async fn create(
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<Category>)> {
-    let category = db::fetch_one(
-        &state.db,
-        "INSERT INTO Category (name, color, userId) VALUES (?1, ?2, ?3) RETURNING *",
-        params![body.name, body.color, user.id],
-    )
-    .await?;
+    let category = add(&state.db, user.id, body).await?;
     Ok((StatusCode::CREATED, Json(category)))
 }
 
+pub async fn add(conn: &Connection, user_id: i64, body: CreateBody) -> Result<Category> {
+    let category = db::fetch_one(
+        conn,
+        "INSERT INTO Category (name, color, userId) VALUES (?1, ?2, ?3) RETURNING *",
+        params![body.name, body.color, user_id],
+    )
+    .await?;
+    Ok(category)
+}
+
 #[derive(Deserialize)]
-struct UpdateBody {
-    name: Option<String>,
-    color: Option<String>,
+pub struct UpdateBody {
+    pub name: Option<String>,
+    pub color: Option<String>,
 }
 
 async fn update(
@@ -95,32 +105,38 @@ async fn update(
     Id(id): Id,
     JsonBody(body): JsonBody<UpdateBody>,
 ) -> Result<Json<Category>> {
+    Ok(Json(edit(&state.db, user.id, id, body).await?))
+}
+
+pub async fn edit(conn: &Connection, user_id: i64, id: i64, body: UpdateBody) -> Result<Category> {
     let category = db::fetch_optional(
-        &state.db,
+        conn,
         "UPDATE Category SET name = COALESCE(?1, name), color = COALESCE(?2, color)
          WHERE id = ?3 AND userId = ?4 RETURNING *",
-        params![body.name, body.color, id, user.id],
+        params![body.name, body.color, id, user_id],
     )
     .await?
     .ok_or_else(not_found)?;
-    Ok(Json(category))
+    Ok(category)
 }
 
-/// Expenses keep their category's name, so deleting a category doesn't touch them.
 async fn remove(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
     Id(id): Id,
 ) -> Result<StatusCode> {
-    let deleted = state
-        .db
-        .execute(
-            "DELETE FROM Category WHERE id = ?1 AND userId = ?2",
-            [id, user.id],
-        )
-        .await?;
-    if deleted == 0 {
-        return Err(not_found());
-    }
+    delete(&state.db, user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a category, returning it. Expenses keep its name, so deleting it doesn't touch them.
+pub async fn delete(conn: &Connection, user_id: i64, id: i64) -> Result<Category> {
+    let category = db::fetch_optional(
+        conn,
+        "DELETE FROM Category WHERE id = ?1 AND userId = ?2 RETURNING *",
+        [id, user_id],
+    )
+    .await?
+    .ok_or_else(not_found)?;
+    Ok(category)
 }

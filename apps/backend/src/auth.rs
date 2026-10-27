@@ -96,12 +96,17 @@ async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<Option<(U
     {
         return Ok(Some((user, AuthMethod::Session)));
     }
-    if let Some(key) = bearer_token(headers)
-        && let Some(user) = api_keys::key_user(state, key).await?
-    {
-        return Ok(Some((user, AuthMethod::ApiKey)));
+    Ok(api_key_user(headers, state)
+        .await?
+        .map(|user| (user, AuthMethod::ApiKey)))
+}
+
+/// The owner of the `Authorization: Bearer <api key>` header's key, ignoring any session cookie.
+pub async fn api_key_user(headers: &HeaderMap, state: &AppState) -> Result<Option<User>> {
+    match bearer_token(headers) {
+        Some(key) => api_keys::key_user(state, key).await,
+        None => Ok(None),
     }
-    Ok(None)
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -308,9 +313,9 @@ async fn me(AuthUser(user): AuthUser) -> Json<User> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateProfileBody {
-    name: Option<String>,
-    expendable_amount_per_week: Option<f64>,
+pub struct UpdateProfileBody {
+    pub name: Option<String>,
+    pub expendable_amount_per_week: Option<f64>,
 }
 
 async fn update_me(
@@ -318,6 +323,14 @@ async fn update_me(
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<UpdateProfileBody>,
 ) -> Result<Json<User>> {
+    Ok(Json(update_profile(&state, &user, body).await?))
+}
+
+pub async fn update_profile(
+    state: &AppState,
+    user: &User,
+    body: UpdateProfileBody,
+) -> Result<User> {
     let name = body.name.map(|name| name.trim().to_owned());
     if name.as_deref() == Some("") {
         return Err(AppError::bad_request("Name cannot be empty"));
@@ -345,7 +358,7 @@ async fn update_me(
         ],
     )
     .await?;
-    Ok(Json(user))
+    Ok(user)
 }
 
 fn normalize_email(email: &str) -> String {

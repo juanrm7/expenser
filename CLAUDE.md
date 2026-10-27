@@ -33,7 +33,8 @@ expenser/
 ## Backend (`apps/backend`)
 
 **Stack:** Rust (edition 2024), axum 0.8 + tokio, tower-http (CORS, request ids, tracing), libSQL
-(`libsql` crate: a local SQLite file or remote Turso), serde, chrono, bcrypt, tracing
+(`libsql` crate: a local SQLite file or remote Turso), serde, chrono, bcrypt, tracing, rmcp (MCP
+server) + schemars
 
 - Dev: `cargo run` (what `pnpm dev` runs)
 - Build: `cargo build --release` → `target/release/expenser-backend`
@@ -55,12 +56,14 @@ src/
 ├── dates.rs       # parse_date, local_date, week_start, month_start, start_of_day (server's local TZ)
 ├── auth.rs        # User/Role, AuthUser/SessionUser extractors, sessions, /auth/* handlers
 ├── api_keys.rs    # /api-keys handlers; key_user() resolves an API key to its owner
-├── categories.rs  # /categories handlers; find() (also used by expenses)
-└── expenses.rs    # /expenses handlers + the weekly/monthly summary
+├── categories.rs  # /categories handlers; all/find/add/edit/delete (also used by expenses, mcp)
+├── expenses.rs    # /expenses handlers + the weekly/monthly summary; summarize/add/edit/delete
+└── mcp.rs         # /mcp: MCP server (rmcp) whose tools call the functions above
 tests/
 ├── common/mod.rs  # TestApp: the real router over a temp DB, clock fixed, seed helpers
 ├── expenses.rs    # Expense + summary regression tests
-└── api.rs         # Auth, sessions, categories, API keys, HTTP plumbing, migrations
+├── api.rs         # Auth, sessions, categories, API keys, HTTP plumbing, migrations
+└── mcp.rs         # MCP auth, handshake and every tool
 ```
 
 ### Feature pattern
@@ -95,6 +98,9 @@ async fn create(
 ```
 
 - Merge a new feature's `routes()` into `app()` in `src/lib.rs`.
+- When the MCP server offers an action too, its logic lives in a `pub async fn` the handler wraps
+  (`expenses::add`, `categories::edit`, `auth::update_profile`, …): body in, row or `AppError`
+  out. The MCP tool calls the same function, so both validate identically.
 - Errors: return `AppError::bad_request` / `not_found` / `new(status, msg)`; `?` on anything else
   becomes a logged 500. Every error body is `{ "message": "..." }`, including malformed JSON
   (`JsonBody`) and non-numeric ids (`Id`, 400 `Invalid id`).
@@ -118,7 +124,9 @@ for scripts (`Authorization: Bearer exp_...`).
   session + user; with no valid session they fall back to a Bearer API key. Nothing is rejected
   globally: routes opt in by taking one of them as an argument.
 - `AuthUser` 401s without a user and accepts both auth methods. Every route except `/health`,
-  signup, login and the `api-keys` routes takes it.
+  signup, login, the `api-keys` routes and `/mcp` takes it.
+- `/mcp` accepts API keys only (`auth::api_key_user`), never the session cookie, so a web page
+  can't drive it through a logged-in browser. It 401s with `WWW-Authenticate: Bearer`.
 - `SessionUser` additionally 403s API-key requests. The `api-keys` routes use it, so a leaked key
   can't create or revoke keys.
 - API keys: `exp_` + 32 random bytes (base64url). Only a SHA-256 hash (`keyHash`, unique, used for
@@ -156,6 +164,7 @@ for scripts (`Authorization: Bearer exp_...`).
 | GET | `/api-keys` | session only | List the user's API keys (name, prefix, lastUsedAt, createdAt) |
 | POST | `/api-keys` | session only | Create a key (body: `{ name }`); response includes the full `key`, shown once |
 | DELETE | `/api-keys/{id}` | session only | Revoke a key (204) |
+| POST | `/mcp` | API key only | MCP server for AI assistants (see below) |
 
 "Required" accepts a session cookie or an API key; "session only" rejects API keys with 403.
 
@@ -174,6 +183,28 @@ for scripts (`Authorization: Bearer exp_...`).
 - The response also includes a `monthly` block (calendar month to date): allowance is derived as
   `(weekly allowance / 7) * daysInMonth`, spent is aggregated from expenses in the current month.
 
+### MCP server (`mcp.rs`)
+
+`/mcp` lets AI assistants (Claude Code: `claude mcp add --transport http expenser <api>/mcp
+--header "Authorization: Bearer exp_..."`) use the app through tools: `get_summary`,
+`list_expenses`, `add_expense`/`update_expense`/`delete_expense`, `list_categories`/`add_category`/
+`update_category`/`delete_category`, `get_profile`/`update_profile`.
+
+- Built on `rmcp`'s Streamable HTTP service, stateless (no MCP sessions, `NeverSessionManager`) with
+  JSON responses. `serve` authenticates the API key, then hands the request to a fresh service whose
+  `Server` holds `AppState` and that `User`, so tools act as the key's owner.
+- A tool is a method in the `#[tool_router] impl Server` block: its doc comment is the description,
+  its `Parameters<Args>` struct (serde + `JsonSchema`, field doc comments) the input schema, and
+  `annotations(read_only_hint = true)` / `destructive_hint = false` mark reads and pure additions.
+- Tools return `reply(result)`: the value as JSON text, a client `AppError` as a tool error
+  (`isError`) the model reads and can act on, an internal one as a logged JSON-RPC internal error.
+- Tools take categories by name (case-insensitive) and return expenses with their local `date`.
+  `list_expenses` is MCP-only: date range/category/description filters, totals over every match,
+  at most `limit` expenses.
+- Host checks are disabled (`disable_allowed_hosts`): they protect servers that trust whoever can
+  reach them, and this one trusts only API keys. rmcp still requires a `Host` header (tests send one).
+- rmcp logs every request's lifecycle at info, so `main.rs` puts `rmcp=warn` before `RUST_LOG`.
+
 ### Environment (`.env`, see `.env.example`)
 
 ```
@@ -184,7 +215,7 @@ HOST=0.0.0.0                        # pm2 sets 127.0.0.1 in production (behind n
 WEBAPP_URL=http://localhost:4321    # Allowed CORS origin
 SESSION_COOKIE_SECURE=false         # true in production (HTTPS-only cookies)
 SESSION_COOKIE_SAMESITE=lax         # lax in prod too (expenser.* + expenser-api.* are same-site)
-RUST_LOG=info                       # tracing filter (default info)
+RUST_LOG=info                       # tracing filter (default info; rmcp stays at warn unless named)
 ```
 
 All of them are optional locally. `main.rs` loads `apps/backend/.env` with dotenvy; variables already
