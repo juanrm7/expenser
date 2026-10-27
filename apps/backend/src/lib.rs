@@ -8,6 +8,7 @@ mod dates;
 pub mod db;
 mod error;
 mod expenses;
+mod mcp;
 
 use std::sync::Arc;
 
@@ -75,6 +76,7 @@ pub fn app(state: AppState) -> Router {
         .merge(categories::routes())
         .merge(expenses::routes())
         .merge(api_keys::routes())
+        .merge(mcp::routes())
         .fallback(|| async { AppError::not_found("Route not found") })
         .layer(
             ServiceBuilder::new()

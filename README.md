@@ -116,7 +116,8 @@ apps/backend/
 │   ├── auth.rs         # /auth/* routes, sessions, AuthUser/SessionUser extractors
 │   ├── api_keys.rs     # /api-keys routes, API key authentication
 │   ├── categories.rs   # /categories routes
-│   └── expenses.rs     # /expenses routes, weekly/monthly summary
+│   ├── expenses.rs     # /expenses routes, weekly/monthly summary
+│   └── mcp.rs          # /mcp: MCP server for AI assistants such as Claude
 ├── tests/              # API tests against the real router and a temporary database
 ├── Cargo.toml
 └── .env.example
@@ -131,8 +132,37 @@ apps/backend/
   query is scoped by the user's id.
 - Errors are `AppError`s: expected ones carry a status and message; anything else is logged and
   answered with a 500. Every error body is `{ "message": "..." }`.
+- Actions the MCP server also offers (adding an expense, editing a category, …) live in plain
+  functions such as `expenses::add`, which the REST handler and the MCP tool both call, so they
+  validate the same way.
 
 To add a feature, create `src/<name>.rs` with a `routes()` function and merge it in `app()` (`src/lib.rs`).
+
+### MCP server
+
+`/mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so AI assistants such
+as Claude can read and manage your expenses. It speaks MCP's Streamable HTTP transport through the
+official [`rmcp`](https://crates.io/crates/rmcp) SDK, without sessions, and authenticates with an
+API key: create one in the webapp's settings (a dedicated one, e.g. "Claude", so you can revoke it
+on its own).
+
+| Tool | Description |
+| :--- | :--- |
+| `get_summary` | The current (or a past `weekStart`) week's balance and the month to date, with today's date |
+| `list_expenses` | Search by date range, category and description: count, total and per-category totals of every match, plus the newest `limit` (default 100) |
+| `add_expense`, `update_expense`, `delete_expense` | Categories are given by name, ignoring case |
+| `list_categories`, `add_category`, `update_category`, `delete_category` | |
+| `get_profile`, `update_profile` | Name and weekly allowance |
+
+To use it from [Claude Code](https://code.claude.com):
+
+```sh
+claude mcp add --transport http expenser https://expenser-api.juanromerodev.com/mcp \
+  --header "Authorization: Bearer exp_..."
+```
+
+(`http://localhost:3001/mcp` locally.) Adding it as a custom connector in the Claude apps (web,
+desktop, mobile) needs OAuth, which the server doesn't support yet.
 
 ### Database
 
@@ -162,7 +192,7 @@ cp apps/backend/.env.example apps/backend/.env
 | `WEBAPP_URL` | `http://localhost:4321` | Allowed CORS origin (the frontend URL) |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` in production so session cookies require HTTPS |
 | `SESSION_COOKIE_SAMESITE` | `lax` | Cookie `SameSite` policy. `lax` works for `expenser.*` + `expenser-api.*` (same site); `none` only if they're on different sites |
-| `RUST_LOG` | `info` | Log filter, e.g. `debug` |
+| `RUST_LOG` | `info` | Log filter, e.g. `debug`. `rmcp` (the MCP SDK) stays at `warn` unless named, e.g. `info,rmcp=info` |
 
 Weeks and months follow the server's local time zone (`TZ`).
 
