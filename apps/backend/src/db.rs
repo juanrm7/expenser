@@ -8,7 +8,10 @@ use serde::de::value::{Error as ValueError, MapDeserializer};
 use serde::de::{DeserializeOwned, IntoDeserializer};
 
 /// Schema migrations, applied in order at startup. Append new files; never edit applied ones.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_oauth.sql"),
+];
 
 /// Connects to the database at `url` and applies any pending migrations.
 pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Connection> {

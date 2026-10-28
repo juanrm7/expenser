@@ -501,6 +501,6 @@ async fn migrations_are_idempotent_and_recorded() {
     let row = rows.next().await.unwrap().unwrap();
     assert_eq!(
         (row.get::<i64>(0).unwrap(), row.get::<i64>(1).unwrap()),
-        (1, 1)
+        (1, 2)
     );
 }

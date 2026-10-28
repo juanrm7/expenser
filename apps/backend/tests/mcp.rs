@@ -70,7 +70,10 @@ async fn only_api_keys_authenticate_and_the_handshake_lists_every_tool() {
         let headers = [headers, vec![HOST, ACCEPT]].concat();
         let response = app.request("POST", "/mcp", Some(body), &headers).await;
         assert_eq!(response.status, 401, "{headers:?}");
-        assert_eq!(response.header("www-authenticate"), "Bearer");
+        assert_eq!(
+            response.header("www-authenticate"),
+            r#"Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp""#
+        );
         assert_eq!(response.body["message"], "Unauthorized");
     }
 

@@ -1,7 +1,13 @@
 import { useState, type FormEvent } from 'react'
+import { withNext } from '../lib/next'
 import { signup } from '../services/auth'
 
-export function SignupForm() {
+interface Props {
+  /** Where to go once signed up */
+  next: string
+}
+
+export function SignupForm({ next }: Props) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,7 +33,7 @@ export function SignupForm() {
     setSubmitting(true)
     try {
       await signup({ name, email, password, expendableAmountPerWeek: amount })
-      window.location.href = '/'
+      window.location.href = next
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign up failed')
       setSubmitting(false)
@@ -121,7 +127,7 @@ export function SignupForm() {
 
         <p className="text-sm text-gray-500 text-center mt-6">
           Already have an account?{' '}
-          <a href="/login" className="text-indigo-600 hover:underline font-medium">
+          <a href={withNext('/login', next)} className="text-indigo-600 hover:underline font-medium">
             Log in
           </a>
         </p>

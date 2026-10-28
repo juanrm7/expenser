@@ -45,7 +45,8 @@ server) + schemars
 
 ```
 migrations/
-└── 0001_init.sql  # Schema migrations, embedded in the binary and applied in order at startup
+├── 0001_init.sql  # Schema migrations, embedded in the binary and applied in order at startup
+└── 0002_oauth.sql # OAuthClient, OAuthCode, OAuthGrant
 src/
 ├── main.rs        # Entry point: loads .env (dotenvy), tracing, config, db, serve + graceful shutdown
 ├── lib.rs         # AppState { db, config, clock }; app(): routes + middleware (request id, trace, CORS)
@@ -56,14 +57,17 @@ src/
 ├── dates.rs       # parse_date, local_date, week_start, month_start, start_of_day (server's local TZ)
 ├── auth.rs        # User/Role, AuthUser/SessionUser extractors, sessions, /auth/* handlers
 ├── api_keys.rs    # /api-keys handlers; key_user() resolves an API key to its owner
+├── tokens.rs      # generate()/hash(): random secrets (API keys, OAuth codes/tokens) + stored hashes
 ├── categories.rs  # /categories handlers; all/find/add/edit/delete (also used by expenses, mcp)
 ├── expenses.rs    # /expenses handlers + the weekly/monthly summary; summarize/add/edit/delete
-└── mcp.rs         # /mcp: MCP server (rmcp) whose tools call the functions above
+├── mcp.rs         # /mcp: MCP server (rmcp) whose tools call the functions above
+└── oauth.rs       # OAuth for /mcp: metadata, registration, authorize/consent, token, connections
 tests/
 ├── common/mod.rs  # TestApp: the real router over a temp DB, clock fixed, seed helpers
 ├── expenses.rs    # Expense + summary regression tests
 ├── api.rs         # Auth, sessions, categories, API keys, HTTP plumbing, migrations
-└── mcp.rs         # MCP auth, handshake and every tool
+├── mcp.rs         # MCP auth, handshake and every tool
+└── oauth.rs       # Discovery, registration, authorize/consent, PKCE, refresh rotation, connections
 ```
 
 ### Feature pattern
@@ -125,8 +129,10 @@ for scripts (`Authorization: Bearer exp_...`).
   globally: routes opt in by taking one of them as an argument.
 - `AuthUser` 401s without a user and accepts both auth methods. Every route except `/health`,
   signup, login, the `api-keys` routes and `/mcp` takes it.
-- `/mcp` accepts API keys only (`auth::api_key_user`), never the session cookie, so a web page
-  can't drive it through a logged-in browser. It 401s with `WWW-Authenticate: Bearer`.
+- `/mcp` accepts an OAuth access token (`oauth::access_token_user`) or an API key
+  (`auth::api_key_user`), never the session cookie, so a web page can't drive it through a
+  logged-in browser. It 401s with `WWW-Authenticate: Bearer resource_metadata="…"` (see OAuth below).
+  OAuth access tokens work on `/mcp` only, not on the REST routes.
 - `SessionUser` additionally 403s API-key requests. The `api-keys` routes use it, so a leaked key
   can't create or revoke keys.
 - API keys: `exp_` + 32 random bytes (base64url). Only a SHA-256 hash (`keyHash`, unique, used for
@@ -164,7 +170,15 @@ for scripts (`Authorization: Bearer exp_...`).
 | GET | `/api-keys` | session only | List the user's API keys (name, prefix, lastUsedAt, createdAt) |
 | POST | `/api-keys` | session only | Create a key (body: `{ name }`); response includes the full `key`, shown once |
 | DELETE | `/api-keys/{id}` | session only | Revoke a key (204) |
-| POST | `/mcp` | API key only | MCP server for AI assistants (see below) |
+| POST | `/mcp` | OAuth token or API key | MCP server for AI assistants (see below) |
+| GET | `/.well-known/oauth-protected-resource[/mcp]` | — | Protected resource metadata (RFC 9728) |
+| GET | `/.well-known/oauth-authorization-server` | — | Authorization server metadata (RFC 8414) |
+| POST | `/oauth/register` | — | Dynamic client registration (RFC 7591); clients are public |
+| GET | `/oauth/authorize` | — | Checks the request, forwards it to the webapp's `/authorize` (303) |
+| GET / POST | `/oauth/consent?<authorize query>` | session only | Consent page: who's asking / decide (`{ approve }` → `{ redirectTo }`) |
+| POST | `/oauth/token` | — | Form-encoded: `authorization_code` (PKCE) or `refresh_token` grant |
+| GET | `/oauth/connections` | session only | The user's connected apps (grants) |
+| DELETE | `/oauth/connections/{id}` | session only | Revoke a connection (204) |
 
 "Required" accepts a session cookie or an API key; "session only" rejects API keys with 403.
 
@@ -185,14 +199,16 @@ for scripts (`Authorization: Bearer exp_...`).
 
 ### MCP server (`mcp.rs`)
 
-`/mcp` lets AI assistants (Claude Code: `claude mcp add --transport http expenser <api>/mcp
---header "Authorization: Bearer exp_..."`) use the app through tools: `get_summary`,
+`/mcp` lets AI assistants use the app through tools (Claude apps: a custom connector with URL
+`<api>/mcp`, signing in with OAuth; Claude Code: `claude mcp add --transport http expenser
+<api>/mcp`, then OAuth via `claude mcp login`, or `--header "Authorization: Bearer exp_..."`): `get_summary`,
 `list_expenses`, `add_expense`/`update_expense`/`delete_expense`, `list_categories`/`add_category`/
 `update_category`/`delete_category`, `get_profile`/`update_profile`.
 
 - Built on `rmcp`'s Streamable HTTP service, stateless (no MCP sessions, `NeverSessionManager`) with
-  JSON responses. `serve` authenticates the API key, then hands the request to a fresh service whose
-  `Server` holds `AppState` and that `User`, so tools act as the key's owner.
+  JSON responses. `serve` authenticates the bearer token (OAuth access token or API key), then hands
+  the request to a fresh service whose `Server` holds `AppState` and that `User`, so tools act as
+  the token's owner.
 - A tool is a method in the `#[tool_router] impl Server` block: its doc comment is the description,
   its `Parameters<Args>` struct (serde + `JsonSchema`, field doc comments) the input schema, and
   `annotations(read_only_hint = true)` / `destructive_hint = false` mark reads and pure additions.
@@ -205,6 +221,32 @@ for scripts (`Authorization: Bearer exp_...`).
   reach them, and this one trusts only API keys. rmcp still requires a `Host` header (tests send one).
 - rmcp logs every request's lifecycle at info, so `main.rs` puts `rmcp=warn` before `RUST_LOG`.
 
+### OAuth (`oauth.rs`)
+
+How the Claude apps connect to `/mcp`, following Claude's requirements for remote MCP servers:
+
+1. `/mcp` 401s with `resource_metadata` → `/.well-known/oauth-protected-resource/mcp` (`resource`
+   = `{API_URL}/mcp`) → `/.well-known/oauth-authorization-server` (issuer = `API_URL`).
+2. The client registers (`/oauth/register`, DCR): https or loopback http redirect URIs only. Every
+   client is public (`token_endpoint_auth_method: none`); there's no CIMD support, so in Claude's
+   connector dialog users pick "Register automatically".
+3. `GET /oauth/authorize` checks the client and redirect URI (errors → 400 for the user), then the
+   rest (`response_type=code`, PKCE S256, `resource`; errors → redirect to the client with `error`
+   and `state`), and 303s valid requests to `{WEBAPP_URL}/authorize?<same query>`.
+4. The webapp's consent page passes that query to `/oauth/consent` (session only, so API keys
+   can't grant access): GET shows the client name and redirect URI; POST `{ approve }` returns the
+   client's redirect URI with a `code` (10 min, single use: `DELETE … RETURNING`) or
+   `error=access_denied`, plus `state`.
+5. `POST /oauth/token` (form-encoded, RFC 6749 `{ error, error_description }` errors) exchanges the
+   code (client, redirect URI and PKCE verifier must match) for an access token (`exa_`, 1 hour)
+   and a refresh token (`exr_`, 90 days). A refresh rotates both in one `UPDATE`, so each refresh
+   token works once.
+
+- Loopback redirect URIs match on any port (RFC 8252), for Claude Code's per-run callback port.
+- A grant (`OAuthGrant` row) is one connection: it holds the current token hashes. Settings lists
+  them (`/oauth/connections`) and disconnecting deletes the row, invalidating both tokens.
+- Expired codes and grants are deleted when new ones are created.
+
 ### Environment (`.env`, see `.env.example`)
 
 ```
@@ -212,7 +254,8 @@ TURSO_DATABASE_URL="file:./dev.db"  # Local SQLite file (created on first start)
 TURSO_AUTH_TOKEN=                   # Required only for remote (libsql://) databases
 PORT=3001
 HOST=0.0.0.0                        # pm2 sets 127.0.0.1 in production (behind nginx)
-WEBAPP_URL=http://localhost:4321    # Allowed CORS origin
+API_URL=http://localhost:3001       # Public API URL: OAuth issuer, MCP URL base (default http://localhost:PORT)
+WEBAPP_URL=http://localhost:4321    # Allowed CORS origin; OAuth consent page lives there
 SESSION_COOKIE_SECURE=false         # true in production (HTTPS-only cookies)
 SESSION_COOKIE_SAMESITE=lax         # lax in prod too (expenser.* + expenser-api.* are same-site)
 RUST_LOG=info                       # tracing filter (default info; rmcp stays at warn unless named)
@@ -240,32 +283,39 @@ src/
 │   ├── login.astro          # Route: /login
 │   ├── signup.astro         # Route: /signup
 │   ├── settings.astro       # Route: /settings
+│   ├── authorize.astro      # Route: /authorize (OAuth consent, reached via the backend's /oauth/authorize)
 │   └── 404.astro
 ├── layouts/
 │   └── Layout.astro        # Base HTML shell; registers the PWA service worker in prod
 ├── components/
 │   ├── Header.tsx          # Shared nav header (shows user name, settings/home toggle, logout)
 │   ├── ApiKeysSection.tsx  # Settings: create (key shown once + copy), list, revoke API keys
+│   ├── ConnectedAppsSection.tsx # Settings: MCP connector URL (copy) + connected apps (disconnect)
 │   └── HomeSkeleton.tsx    # HeaderSkeleton / HomeSkeleton loading placeholders
 ├── renderers/
 │   ├── HomePage.tsx        # Fetches summary+categories once authed, owns page state
 │   ├── SettingsPage.tsx
-│   ├── LoginPage.tsx        # Redirects to / if already authed, else renders LoginForm
+│   ├── LoginPage.tsx        # Redirects to ?next= (default /) if already authed, else renders LoginForm
+│   ├── AuthorizePage.tsx    # Loads the consent request, approves/denies, refuses to render framed
 │   └── SignupPage.tsx
 ├── templates/
 │   ├── ExpenseTracker.tsx  # Main expense UI: weekly balance card, monthly overview, form, list
 │   ├── SettingsScreen.tsx  # Profile (name/allowance) + category editor
+│   ├── AuthorizeConsent.tsx # "Connect Claude?": permissions, signed-in account, destination host
 │   ├── LoginForm.tsx
 │   └── SignupForm.tsx
 ├── services/
 │   ├── auth.ts              # signup, login, logout, getCurrentUser, updateProfile
 │   ├── expenses.ts          # getExpenses, getExpenseSummary, createExpense, deleteExpense
 │   ├── categories.ts        # getCategories, createCategory, deleteCategory
-│   └── apiKeys.ts           # getApiKeys, createApiKey, revokeApiKey
+│   ├── apiKeys.ts           # getApiKeys, createApiKey, revokeApiKey
+│   └── oauth.ts             # getConsentRequest, submitConsent, getConnections, disconnect
 ├── lib/
 │   ├── apiFetch.ts           # fetch wrapper: prefixes backendUrl, adds x-correlation-id, credentials:'include', console-logs each request
 │   ├── useAuth.ts            # React hook: shows cached user immediately, revalidates via /auth/me, redirects to /login if unauthenticated
 │   ├── cache.ts              # localStorage cache of the current user, used by useAuth for instant paint
+│   ├── next.ts               # readNext/withNext/loginUrl: same-origin ?next= return path after login
+│   ├── dates.ts              # Calendar dates (addDays, dateLabel) and instantLabel/lastUsedLabel
 │   └── data.ts               # formatARS(), randomHexColor()/HEX_COLOR_PALETTE (still used); the
 │                              # rest of this file (loadConfig/saveConfig/loadWeekData/getMondayOf/
 │                              # BASE_ALLOWANCE/DEFAULT_CATEGORIES) is unused legacy local-storage
@@ -299,7 +349,9 @@ Astro pages hydrate renderers with `client:load`:
   `window.location.href`.
 - `useAuth()` paints the last-known user from `localStorage` (via `cache.ts`) immediately, then
   calls `GET /auth/me` to revalidate. On a confirmed 401 it clears the cache and redirects to
-  `/login`; on a network error it keeps showing the cached user if there is one.
+  `/login?next=<current page>`; on a network error it keeps showing the cached user if there is one.
+- Login and signup go to `?next=` afterwards (same-origin only, see `lib/next.ts`), so the OAuth
+  consent page survives a login.
 - `Header`'s logout button calls `POST /auth/logout`, clears the cache, and redirects to `/login`.
 
 ### Service layer
@@ -380,6 +432,10 @@ Session  (id TEXT PK, userId → User, expiresAt, createdAt)
 Category (id PK, name, color, userId → User)
 Expense  (id PK, description, amount REAL, category TEXT, createdAt, updatedAt, userId → User)
 ApiKey   (id PK, name, prefix, keyHash UNIQUE, lastUsedAt NULL, createdAt, userId → User)
+OAuthClient (id TEXT PK, name, redirectUris (JSON array), createdAt)
+OAuthCode   (codeHash PK, clientId → OAuthClient, userId → User, redirectUri, codeChallenge, expiresAt)
+OAuthGrant  (id PK, clientId → OAuthClient, userId → User, accessTokenHash UNIQUE, accessExpiresAt,
+             refreshTokenHash UNIQUE, refreshExpiresAt, lastUsedAt NULL, createdAt)
 ```
 
 **Design notes:**

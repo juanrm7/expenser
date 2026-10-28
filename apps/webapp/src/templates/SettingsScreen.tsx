@@ -4,7 +4,9 @@ import { formatARS, randomHexColor } from '../lib/data'
 import { createCategory, deleteCategory, type Category } from '../services/categories'
 import { updateProfile, type AuthUser } from '../services/auth'
 import type { ApiKey } from '../services/apiKeys'
+import type { Connection } from '../services/oauth'
 import { ApiKeysSection } from '../components/ApiKeysSection'
+import { ConnectedAppsSection } from '../components/ConnectedAppsSection'
 
 interface Props {
   user: AuthUser
@@ -12,6 +14,8 @@ interface Props {
   categories: Category[]
   onCategoryAdded: (category: Category) => void
   onCategoryRemoved: (id: number) => void
+  connections: Connection[]
+  onConnectionRemoved: (id: number) => void
   apiKeys: ApiKey[]
   onApiKeyCreated: (apiKey: ApiKey) => void
   onApiKeyRevoked: (id: number) => void
@@ -23,6 +27,8 @@ export function SettingsScreen({
   categories,
   onCategoryAdded,
   onCategoryRemoved,
+  connections,
+  onConnectionRemoved,
   apiKeys,
   onApiKeyCreated,
   onApiKeyRevoked,
@@ -213,6 +219,8 @@ export function SettingsScreen({
           )}
         </ul>
       </section>
+
+      <ConnectedAppsSection connections={connections} onDisconnected={onConnectionRemoved} />
 
       <ApiKeysSection
         apiKeys={apiKeys}
