@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("listening on http://{}", listener.local_addr()?);
 
     let state = AppState {
-        db,
+        db: Arc::new(db),
         config: Arc::new(config),
         clock: Utc::now,
     };

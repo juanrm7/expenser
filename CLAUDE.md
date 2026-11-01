@@ -49,7 +49,7 @@ migrations/
 └── 0002_oauth.sql # OAuthClient, OAuthCode, OAuthGrant
 src/
 ├── main.rs        # Entry point: loads .env (dotenvy), tracing, config, db, serve + graceful shutdown
-├── lib.rs         # AppState { db, config, clock }; app(): routes + middleware (request id, trace, CORS)
+├── lib.rs         # AppState (shared Database), RequestState (request-local Connection); routes + middleware
 ├── config.rs      # Config::from_env(): every env read, validated at startup
 ├── db.rs          # open() (connect + migrate), MIGRATIONS, fetch_all/fetch_optional/fetch_one/fetch_value,
 │                  # timestamp() (DB encoding), to_json/to_json_opt (API encoding of timestamps)
@@ -87,7 +87,7 @@ pub fn routes() -> Router<AppState> {
 
 // Auth is an extractor: AuthUser = session or API key (401 otherwise), SessionUser = session only.
 async fn create(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<Category>)> {
@@ -115,8 +115,11 @@ async fn create(
   `User` with `#[serde(flatten)]`.
 - Time: use `state.now()`, never `Utc::now()`, in handlers, so tests can fix the clock. Bind
   timestamps with `db::timestamp(t)`; serialize them with `#[serde(serialize_with = "db::to_json")]`.
-- One shared `libsql::Connection` (in `AppState`) serves every request; for Turso it reuses one
-  HTTP connection pool. Use `state.db.transaction()` for multi-statement writes (see signup).
+- `AppState` holds an `Arc<libsql::Database>`. The `RequestState` extractor opens one connection
+  per HTTP request and caches it in request extensions so authentication, handlers and stateless
+  MCP tools share it. Never keep a remote `Connection` in process-wide state: its Hrana stream
+  can expire, and cloning it shares the same session. Use `state.db.transaction()` for
+  multi-statement writes (see signup); do not automatically retry writes after transport errors.
 - Blocking work (bcrypt) goes through `tokio::task::spawn_blocking`.
 
 ### Authentication

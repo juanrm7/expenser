@@ -14,6 +14,8 @@ mod tokens;
 
 use std::sync::Arc;
 
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
 use axum::http::{HeaderName, Method, Request};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -34,15 +36,43 @@ const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 
 #[derive(Clone)]
 pub struct AppState {
+    pub db: Arc<libsql::Database>,
+    pub config: Arc<Config>,
+    /// The current time. Swappable so tests can fix "today".
+    pub clock: fn() -> DateTime<Utc>,
+}
+
+/// One connection per HTTP request, shared by its authentication, handler and MCP tools.
+/// A remote connection holds a Hrana session that can expire; only the database handle belongs
+/// in process-wide state. Cloning a connection would keep sharing the same session.
+#[derive(Clone)]
+pub struct RequestState {
     pub db: libsql::Connection,
     pub config: Arc<Config>,
     /// The current time. Swappable so tests can fix "today".
     pub clock: fn() -> DateTime<Utc>,
 }
 
-impl AppState {
+impl RequestState {
     pub fn now(&self) -> DateTime<Utc> {
         (self.clock)()
+    }
+}
+
+impl FromRequestParts<AppState> for RequestState {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
+        if let Some(state) = parts.extensions.get::<Self>() {
+            return Ok(state.clone());
+        }
+        let request_state = Self {
+            db: state.db.connect()?,
+            config: state.config.clone(),
+            clock: state.clock,
+        };
+        parts.extensions.insert(request_state.clone());
+        Ok(request_state)
     }
 }
 

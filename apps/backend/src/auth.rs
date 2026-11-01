@@ -3,7 +3,7 @@
 //! Browsers authenticate with an httpOnly `session_id` cookie; scripts with an API key in an
 //! `Authorization: Bearer exp_…` header (see `api_keys`).
 
-use axum::extract::{FromRequestParts, State};
+use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{AppError, JsonBody, Result};
-use crate::{AppState, api_keys, db};
+use crate::{AppState, RequestState, api_keys, db};
 
 const SESSION_COOKIE: &str = "session_id";
 const SESSION_DAYS: i64 = 30;
@@ -67,7 +67,8 @@ impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self> {
-        match authenticate(&parts.headers, state).await? {
+        let state = RequestState::from_request_parts(parts, state).await?;
+        match authenticate(&parts.headers, &state).await? {
             Some((user, _)) => Ok(Self(user)),
             None => Err(AppError::unauthorized()),
         }
@@ -78,7 +79,8 @@ impl FromRequestParts<AppState> for SessionUser {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self> {
-        match authenticate(&parts.headers, state).await? {
+        let state = RequestState::from_request_parts(parts, state).await?;
+        match authenticate(&parts.headers, &state).await? {
             Some((user, AuthMethod::Session)) => Ok(Self(user)),
             Some((_, AuthMethod::ApiKey)) => Err(AppError::new(
                 StatusCode::FORBIDDEN,
@@ -90,7 +92,10 @@ impl FromRequestParts<AppState> for SessionUser {
 }
 
 /// A valid session cookie takes precedence; otherwise an `Authorization: Bearer <api key>` header.
-async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<Option<(User, AuthMethod)>> {
+async fn authenticate(
+    headers: &HeaderMap,
+    state: &RequestState,
+) -> Result<Option<(User, AuthMethod)>> {
     if let Some(cookie) = CookieJar::from_headers(headers).get(SESSION_COOKIE)
         && let Some(user) = session_user(state, cookie.value()).await?
     {
@@ -102,7 +107,7 @@ async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<Option<(U
 }
 
 /// The owner of the `Authorization: Bearer <api key>` header's key, ignoring any session cookie.
-pub async fn api_key_user(headers: &HeaderMap, state: &AppState) -> Result<Option<User>> {
+pub async fn api_key_user(headers: &HeaderMap, state: &RequestState) -> Result<Option<User>> {
     match bearer_token(headers) {
         Some(key) => api_keys::key_user(state, key).await,
         None => Ok(None),
@@ -116,7 +121,7 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
-async fn session_user(state: &AppState, session_id: &str) -> Result<Option<User>> {
+async fn session_user(state: &RequestState, session_id: &str) -> Result<Option<User>> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct SessionRow {
@@ -144,7 +149,7 @@ async fn session_user(state: &AppState, session_id: &str) -> Result<Option<User>
 }
 
 /// Starts a session for the user, returning the cookie jar with its cookie set.
-async fn start_session(state: &AppState, jar: CookieJar, user_id: i64) -> Result<CookieJar> {
+async fn start_session(state: &RequestState, jar: CookieJar, user_id: i64) -> Result<CookieJar> {
     let id = Uuid::new_v4().to_string();
     let now = state.now();
     state
@@ -162,7 +167,7 @@ async fn start_session(state: &AppState, jar: CookieJar, user_id: i64) -> Result
     Ok(jar.add(session_cookie(state, id)))
 }
 
-fn session_cookie(state: &AppState, value: String) -> Cookie<'static> {
+fn session_cookie(state: &RequestState, value: String) -> Cookie<'static> {
     Cookie::build((SESSION_COOKIE, value))
         .http_only(true)
         .same_site(state.config.cookie_same_site)
@@ -190,7 +195,7 @@ struct SignupBody {
 }
 
 async fn signup(
-    State(state): State<AppState>,
+    state: RequestState,
     jar: CookieJar,
     JsonBody(body): JsonBody<SignupBody>,
 ) -> Result<(StatusCode, CookieJar, Json<User>)> {
@@ -253,7 +258,7 @@ struct LoginBody {
 }
 
 async fn login(
-    State(state): State<AppState>,
+    state: RequestState,
     jar: CookieJar,
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<(CookieJar, Json<User>)> {
@@ -292,7 +297,7 @@ async fn login(
 }
 
 async fn logout(
-    State(state): State<AppState>,
+    state: RequestState,
     _: AuthUser,
     jar: CookieJar,
 ) -> Result<(StatusCode, CookieJar)> {
@@ -320,7 +325,7 @@ pub struct UpdateProfileBody {
 }
 
 async fn update_me(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<UpdateProfileBody>,
 ) -> Result<Json<User>> {
@@ -328,7 +333,7 @@ async fn update_me(
 }
 
 pub async fn update_profile(
-    state: &AppState,
+    state: &RequestState,
     user: &User,
     body: UpdateProfileBody,
 ) -> Result<User> {

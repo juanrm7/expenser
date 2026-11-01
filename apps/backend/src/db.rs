@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};
-use libsql::{Builder, Connection, Row, params, params::IntoParams};
+use libsql::{Builder, Connection, Database, Row, params, params::IntoParams};
 use serde::Serializer;
 use serde::de::value::{Error as ValueError, MapDeserializer};
 use serde::de::{DeserializeOwned, IntoDeserializer};
@@ -13,8 +13,9 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_oauth.sql"),
 ];
 
-/// Connects to the database at `url` and applies any pending migrations.
-pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Connection> {
+/// Opens the database at `url` and applies pending migrations on a startup-only connection.
+/// Call `connect()` for each request instead of retaining a remote Hrana session indefinitely.
+pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Database> {
     let db = if url.starts_with("libsql:") || url.starts_with("http") {
         Builder::new_remote(url.to_owned(), auth_token.to_owned())
             .build()
@@ -28,7 +29,7 @@ pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Connection> {
 
     let conn = db.connect()?;
     migrate(&conn).await.context("failed to migrate database")?;
-    Ok(conn)
+    Ok(db)
 }
 
 async fn migrate(conn: &Connection) -> anyhow::Result<()> {

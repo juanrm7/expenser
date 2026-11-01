@@ -1,6 +1,5 @@
 //! Per-user expense categories.
 
-use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -9,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, Id, JsonBody, Result};
-use crate::{AppState, db};
+use crate::{AppState, RequestState, db};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,18 +51,11 @@ fn not_found() -> AppError {
     AppError::not_found("Category not found")
 }
 
-async fn list(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-) -> Result<Json<Vec<Category>>> {
+async fn list(state: RequestState, AuthUser(user): AuthUser) -> Result<Json<Vec<Category>>> {
     Ok(Json(all(&state.db, user.id).await?))
 }
 
-async fn show(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-    Id(id): Id,
-) -> Result<Json<Category>> {
+async fn show(state: RequestState, AuthUser(user): AuthUser, Id(id): Id) -> Result<Json<Category>> {
     let category = find(&state.db, user.id, id).await?.ok_or_else(not_found)?;
     Ok(Json(category))
 }
@@ -75,7 +67,7 @@ pub struct CreateBody {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<Category>)> {
@@ -100,7 +92,7 @@ pub struct UpdateBody {
 }
 
 async fn update(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     Id(id): Id,
     JsonBody(body): JsonBody<UpdateBody>,
@@ -120,11 +112,7 @@ pub async fn edit(conn: &Connection, user_id: i64, id: i64, body: UpdateBody) ->
     Ok(category)
 }
 
-async fn remove(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-    Id(id): Id,
-) -> Result<StatusCode> {
+async fn remove(state: RequestState, AuthUser(user): AuthUser, Id(id): Id) -> Result<StatusCode> {
     delete(&state.db, user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

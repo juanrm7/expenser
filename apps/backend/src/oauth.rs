@@ -9,7 +9,7 @@
 //! (`exr_…`). Each approval is a grant: a connection the webapp's settings list and can revoke.
 
 use axum::extract::rejection::{FormRejection, JsonRejection};
-use axum::extract::{Query, RawQuery, State};
+use axum::extract::{Query, RawQuery};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
@@ -25,7 +25,7 @@ use url::{Host, Url};
 
 use crate::auth::{self, SessionUser, USER_COLUMNS, User};
 use crate::error::{AppError, Id, JsonBody, Result};
-use crate::{AppState, db, tokens};
+use crate::{AppState, RequestState, db, tokens};
 
 const ACCESS_TOKEN_PREFIX: &str = "exa_";
 const REFRESH_TOKEN_PREFIX: &str = "exr_";
@@ -62,19 +62,19 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// The MCP server's URL: the resource every token is for.
-fn resource(state: &AppState) -> String {
+fn resource(state: &RequestState) -> String {
     format!("{}/mcp", state.config.api_url)
 }
 
 /// Where `/mcp`'s metadata is, for the challenge it answers unauthenticated requests with.
-pub fn resource_metadata_url(state: &AppState) -> String {
+pub fn resource_metadata_url(state: &RequestState) -> String {
     format!(
         "{}/.well-known/oauth-protected-resource/mcp",
         state.config.api_url
     )
 }
 
-async fn resource_metadata(State(state): State<AppState>) -> Json<Value> {
+async fn resource_metadata(state: RequestState) -> Json<Value> {
     Json(json!({
         "resource": resource(&state),
         "authorization_servers": [state.config.api_url],
@@ -83,7 +83,7 @@ async fn resource_metadata(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn server_metadata(State(state): State<AppState>) -> Json<Value> {
+async fn server_metadata(state: RequestState) -> Json<Value> {
     let issuer = &state.config.api_url;
     Json(json!({
         "issuer": issuer,
@@ -210,7 +210,7 @@ struct RegisteredClient {
 /// Dynamic client registration (RFC 7591). Every client is registered as a public one, whatever
 /// authentication method it asks for.
 async fn register(
-    State(state): State<AppState>,
+    state: RequestState,
     body: std::result::Result<Json<RegisterBody>, JsonRejection>,
 ) -> Result<(StatusCode, Json<RegisteredClient>), OAuthError> {
     let Json(body) = body
@@ -290,7 +290,7 @@ struct Authorization {
 impl Authorization {
     /// Checks the request's client and redirect URI. Until both are known to be valid nothing may
     /// be sent to that URI, so these errors are for the user.
-    async fn new(state: &AppState, params: AuthorizeParams) -> Result<Self> {
+    async fn new(state: &RequestState, params: AuthorizeParams) -> Result<Self> {
         let invalid =
             || AppError::bad_request("This sign-in link is invalid: unknown app or redirect");
         let client_id = params.client_id.as_deref().ok_or_else(invalid)?;
@@ -314,7 +314,7 @@ impl Authorization {
     }
 
     /// What's wrong with the rest of the request, as an OAuth error code and description.
-    fn error(&self, state: &AppState) -> Option<(&'static str, String)> {
+    fn error(&self, state: &RequestState) -> Option<(&'static str, String)> {
         let params = &self.params;
         if params.response_type.as_deref() != Some("code") {
             return Some((
@@ -371,7 +371,7 @@ fn pkce_challenge(verifier: &str) -> String {
 /// The authorization endpoint: errors in a request from a valid client go back to it; valid
 /// requests go on to the webapp, where the user approves or denies them.
 async fn authorize(
-    State(state): State<AppState>,
+    state: RequestState,
     RawQuery(query): RawQuery,
     Query(params): Query<AuthorizeParams>,
 ) -> Result<Redirect> {
@@ -389,7 +389,7 @@ async fn authorize(
 
 /// An authorization request the user can decide on. The webapp passes on the query it was sent,
 /// which `authorize` already checked, so any error here is explained to the user.
-async fn decidable(state: &AppState, params: AuthorizeParams) -> Result<Authorization> {
+async fn decidable(state: &RequestState, params: AuthorizeParams) -> Result<Authorization> {
     let request = Authorization::new(state, params).await?;
     match request.error(state) {
         Some((_, description)) => Err(AppError::bad_request(description)),
@@ -406,7 +406,7 @@ struct ConsentRequest {
 
 /// What the consent page shows: who's asking, and where they'll be sent back to.
 async fn consent_request(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(_): SessionUser,
     Query(params): Query<AuthorizeParams>,
 ) -> Result<Json<ConsentRequest>> {
@@ -431,7 +431,7 @@ struct ConsentResult {
 
 /// The user's decision. A logged-in browser only (`SessionUser`), so an API key can't grant access.
 async fn consent(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(user): SessionUser,
     Query(params): Query<AuthorizeParams>,
     JsonBody(body): JsonBody<ConsentBody>,
@@ -503,7 +503,7 @@ impl Tokens {
 
 /// The token endpoint: exchanges a code, or a refresh token, for new tokens.
 async fn token(
-    State(state): State<AppState>,
+    state: RequestState,
     form: std::result::Result<Form<TokenParams>, FormRejection>,
 ) -> Result<Response, OAuthError> {
     let Form(params) =
@@ -532,7 +532,7 @@ async fn token(
 
 /// Starts a grant: the user's connection to the client.
 async fn exchange_code(
-    state: &AppState,
+    state: &RequestState,
     client_id: &str,
     params: &TokenParams,
 ) -> Result<Tokens, OAuthError> {
@@ -604,7 +604,7 @@ async fn exchange_code(
 
 /// Replaces a grant's tokens. The old refresh token stops working, as does the old access token.
 async fn refresh(
-    state: &AppState,
+    state: &RequestState,
     client_id: &str,
     params: &TokenParams,
 ) -> Result<Tokens, OAuthError> {
@@ -644,7 +644,7 @@ async fn refresh(
 }
 
 /// The user an `Authorization: Bearer exa_…` access token was issued to, while it's current.
-pub async fn access_token_user(headers: &HeaderMap, state: &AppState) -> Result<Option<User>> {
+pub async fn access_token_user(headers: &HeaderMap, state: &RequestState) -> Result<Option<User>> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct GrantOwner {
@@ -703,7 +703,7 @@ struct Connection {
 
 /// The apps the user has connected, newest first.
 async fn connections(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(user): SessionUser,
 ) -> Result<Json<Vec<Connection>>> {
     let connections = db::fetch_all(
@@ -721,7 +721,7 @@ async fn connections(
 
 /// Revokes a connection: its access and refresh tokens stop working at once.
 async fn disconnect(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(user): SessionUser,
     Id(id): Id,
 ) -> Result<StatusCode> {

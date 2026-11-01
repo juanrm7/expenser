@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::Request;
 use axum::http::header::WWW_AUTHENTICATE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -28,7 +28,7 @@ use tower::ServiceExt;
 use crate::auth::{self, User};
 use crate::error::{AppError, Result};
 use crate::expenses::{DatedExpense, Expense};
-use crate::{AppState, categories, dates, db, expenses, oauth};
+use crate::{AppState, RequestState, categories, dates, db, expenses, oauth};
 
 const INSTRUCTIONS: &str = "Expenser tracks the user's spending in Argentine pesos (ARS) against \
 a weekly allowance. Weeks run Saturday through Friday; the monthly allowance is the weekly one \
@@ -44,7 +44,7 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/mcp", any(serve))
 }
 
-async fn serve(State(state): State<AppState>, request: Request) -> Result<Response> {
+async fn serve(state: RequestState, request: Request) -> Result<Response> {
     let headers = request.headers();
     let user = match oauth::access_token_user(headers, &state).await? {
         Some(user) => Some(user),
@@ -82,7 +82,7 @@ async fn serve(State(state): State<AppState>, request: Request) -> Result<Respon
 /// The MCP tools, acting as one user.
 #[derive(Clone)]
 struct Server {
-    state: AppState,
+    state: RequestState,
     user: User,
 }
 
