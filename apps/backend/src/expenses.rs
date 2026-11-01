@@ -1,6 +1,6 @@
 //! Per-user expenses, and the weekly/monthly summary the home screen is built from.
 
-use axum::extract::{Query, State};
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{AuthUser, User};
 use crate::error::{AppError, Id, JsonBody, Result};
-use crate::{AppState, categories, dates, db};
+use crate::{AppState, RequestState, categories, dates, db};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,10 +39,7 @@ fn not_found() -> AppError {
     AppError::not_found("Expense not found")
 }
 
-async fn list(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-) -> Result<Json<Vec<Expense>>> {
+async fn list(state: RequestState, AuthUser(user): AuthUser) -> Result<Json<Vec<Expense>>> {
     let expenses = db::fetch_all(
         &state.db,
         "SELECT * FROM Expense WHERE userId = ?1 ORDER BY createdAt DESC",
@@ -52,11 +49,7 @@ async fn list(
     Ok(Json(expenses))
 }
 
-async fn show(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-    Id(id): Id,
-) -> Result<Json<Expense>> {
+async fn show(state: RequestState, AuthUser(user): AuthUser, Id(id): Id) -> Result<Json<Expense>> {
     let expense = db::fetch_optional(
         &state.db,
         "SELECT * FROM Expense WHERE id = ?1 AND userId = ?2",
@@ -115,7 +108,7 @@ struct MonthlySummary {
 }
 
 async fn summary(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     Query(query): Query<SummaryQuery>,
 ) -> Result<Json<Summary>> {
@@ -125,7 +118,11 @@ async fn summary(
 
 /// The balance of the week starting on `week_start` (a Saturday, `YYYY-MM-DD`; the current week if
 /// `None`), and of the current month to date.
-pub async fn summarize(state: &AppState, user: &User, week_start: Option<&str>) -> Result<Summary> {
+pub async fn summarize(
+    state: &RequestState,
+    user: &User,
+    week_start: Option<&str>,
+) -> Result<Summary> {
     let today = dates::local_date(state.now());
     let current_week_start = dates::week_start(today);
     let week_start = match week_start {
@@ -199,7 +196,7 @@ pub struct CreateBody {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<Expense>)> {
@@ -207,7 +204,7 @@ async fn create(
     Ok((StatusCode::CREATED, Json(expense)))
 }
 
-pub async fn add(state: &AppState, user: &User, body: CreateBody) -> Result<Expense> {
+pub async fn add(state: &RequestState, user: &User, body: CreateBody) -> Result<Expense> {
     let now = state.now();
     check_amount(body.amount)?;
     let created_at = match &body.date {
@@ -247,7 +244,7 @@ pub struct UpdateBody {
 }
 
 async fn update(
-    State(state): State<AppState>,
+    state: RequestState,
     AuthUser(user): AuthUser,
     Id(id): Id,
     JsonBody(body): JsonBody<UpdateBody>,
@@ -256,7 +253,7 @@ async fn update(
     Ok(Json(expense))
 }
 
-pub async fn edit(state: &AppState, user: &User, id: i64, body: UpdateBody) -> Result<Expense> {
+pub async fn edit(state: &RequestState, user: &User, id: i64, body: UpdateBody) -> Result<Expense> {
     if body.amount.is_none()
         && body.description.is_none()
         && body.category_id.is_none()
@@ -307,17 +304,13 @@ pub async fn edit(state: &AppState, user: &User, id: i64, body: UpdateBody) -> R
     Ok(expense)
 }
 
-async fn remove(
-    State(state): State<AppState>,
-    AuthUser(user): AuthUser,
-    Id(id): Id,
-) -> Result<StatusCode> {
+async fn remove(state: RequestState, AuthUser(user): AuthUser, Id(id): Id) -> Result<StatusCode> {
     delete(&state, &user, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Deletes an expense, returning it.
-pub async fn delete(state: &AppState, user: &User, id: i64) -> Result<Expense> {
+pub async fn delete(state: &RequestState, user: &User, id: i64) -> Result<Expense> {
     let expense = db::fetch_optional(
         &state.db,
         "DELETE FROM Expense WHERE id = ?1 AND userId = ?2 RETURNING *",

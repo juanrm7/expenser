@@ -2,7 +2,6 @@
 //!
 //! Only a hash of each key is stored (see `tokens`); the key itself is returned once, on creation.
 
-use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
@@ -12,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{SessionUser, User};
 use crate::error::{AppError, Id, JsonBody, Result};
-use crate::{AppState, db, tokens};
+use crate::{AppState, RequestState, db, tokens};
 
 const KEY_PREFIX: &str = "exp_";
 /// "exp_" plus 8 characters: enough to tell keys apart in the UI.
@@ -49,10 +48,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api-keys/{id}", delete(revoke))
 }
 
-async fn list(
-    State(state): State<AppState>,
-    SessionUser(user): SessionUser,
-) -> Result<Json<Vec<ApiKey>>> {
+async fn list(state: RequestState, SessionUser(user): SessionUser) -> Result<Json<Vec<ApiKey>>> {
     let keys = db::fetch_all(
         &state.db,
         "SELECT id, name, prefix, lastUsedAt, createdAt FROM ApiKey
@@ -69,7 +65,7 @@ struct CreateBody {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(user): SessionUser,
     JsonBody(body): JsonBody<CreateBody>,
 ) -> Result<(StatusCode, Json<CreatedApiKey>)> {
@@ -114,7 +110,7 @@ async fn create(
 }
 
 async fn revoke(
-    State(state): State<AppState>,
+    state: RequestState,
     SessionUser(user): SessionUser,
     Id(id): Id,
 ) -> Result<StatusCode> {
@@ -132,7 +128,7 @@ async fn revoke(
 }
 
 /// The owner of a raw API key, or `None` if the key is unknown or revoked.
-pub async fn key_user(state: &AppState, key: &str) -> Result<Option<User>> {
+pub async fn key_user(state: &RequestState, key: &str) -> Result<Option<User>> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct KeyOwner {

@@ -110,7 +110,7 @@ apps/backend/
 │   └── 0002_oauth.sql  # OAuth clients, codes and grants
 ├── src/
 │   ├── main.rs         # Entry point: config, database, server, graceful shutdown
-│   ├── lib.rs          # AppState and the router (CORS, correlation ids, request logging)
+│   ├── lib.rs          # Shared AppState, request-local RequestState and the router
 │   ├── config.rs       # Environment variables
 │   ├── db.rs           # Connection, migrations, query helpers, timestamp encoding
 │   ├── error.rs        # AppError ({ "message" } error bodies), JsonBody and Id extractors
@@ -130,7 +130,10 @@ apps/backend/
 ### Architecture
 
 - Handlers declare what they need as arguments: `AuthUser` (session cookie or API key, else 401),
-  `SessionUser` (session only; 403 for API keys), `JsonBody<T>`, `Id`, `State<AppState>`.
+  `SessionUser` (session only; 403 for API keys), `JsonBody<T>`, `Id`, `RequestState`.
+- `AppState` retains the database handle; `RequestState` opens a fresh connection per request,
+  shared by authentication and the handler (including MCP tools). This prevents an expired Turso
+  Hrana stream from affecting later requests. Transactions stay on that request's connection.
 - Queries are plain SQL run through the helpers in `db.rs` (`fetch_all`, `fetch_optional`,
   `fetch_one`, `fetch_value`), which deserialize rows into serde structs by column name. Every
   query is scoped by the user's id.

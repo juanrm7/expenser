@@ -73,10 +73,11 @@ pub async fn spawn() -> TestApp {
         database_auth_token: String::new(),
     };
     let state = AppState {
-        db: db.clone(),
+        db: Arc::new(db),
         config: Arc::new(config),
         clock: now,
     };
+    let db = state.db.connect().unwrap();
     TestApp {
         router: app(state),
         db,

@@ -486,11 +486,15 @@ async fn migrations_are_idempotent_and_recorded() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
     let path = path.to_str().unwrap();
-    let first = db::open(path, "").await.unwrap();
+    let first = db::open(path, "").await.unwrap().connect().unwrap();
     first.execute("INSERT INTO User (name, email, passwordHash, expendableAmountPerWeek, updatedAt) VALUES ('a', 'a@b.c', 'x', 1, ?1)", params![db::timestamp(now())]).await.unwrap();
     drop(first);
 
-    let reopened = db::open(&format!("file:{path}"), "").await.unwrap();
+    let reopened = db::open(&format!("file:{path}"), "")
+        .await
+        .unwrap()
+        .connect()
+        .unwrap();
     let mut rows = reopened
         .query(
             "SELECT (SELECT COUNT(*) FROM User), (SELECT COUNT(*) FROM _migrations)",
