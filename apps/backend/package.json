@@ -1,11 +1,35 @@
 {
   "name": "@expenser/backend",
   "private": true,
+  "type": "module",
   "version": "0.0.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "dev": "cargo run",
-    "build": "cargo build --release --locked",
-    "start": "./target/release/expenser-backend",
-    "test": "cargo test --locked"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --enable-source-maps dist/server.js",
+    "test": "TZ=America/Argentina/Buenos_Aires tsx --test 'tests/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/cors": "^11.4.0",
+    "@libsql/client": "^0.18.0",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "bcrypt": "^6.0.0",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.12.8",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^22.20.5",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }
