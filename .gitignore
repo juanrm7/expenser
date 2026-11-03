@@ -1,6 +1,5 @@
 # build output
 dist/
-target/
 # generated types
 .astro/
 # turborepo cache

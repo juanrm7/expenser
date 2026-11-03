@@ -2,7 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "build": {
-      "outputs": ["dist/**", "target/release/expenser-backend"]
+      "outputs": ["dist/**"]
     },
     "dev": {
       "cache": false,

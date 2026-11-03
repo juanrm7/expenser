@@ -7,18 +7,20 @@ module.exports = {
     {
       name: 'expenser-backend',
       cwd: path.join(__dirname, '../apps/backend'),
-      // The release binary built by deploy.sh. It reads its runtime config (TURSO_*, PORT,
+      // Built by deploy.sh (`tsc`). It reads its runtime config (TURSO_*, PORT, API_URL,
       // WEBAPP_URL, cookie flags) from apps/backend/.env itself; variables set in `env` below
       // take precedence over the file.
-      script: 'target/release/expenser-backend',
-      interpreter: 'none',
+      script: 'dist/server.js',
+      node_args: '--enable-source-maps',
       env: {
+        NODE_ENV: 'production',
         // Only reachable through the nginx reverse proxy.
         HOST: '127.0.0.1',
       },
       exec_mode: 'fork',
       instances: 1,
       max_memory_restart: '300M',
+      time: true,
     },
   ],
 }
